@@ -1,0 +1,108 @@
+#!/bin/bash
+# Pre-commit hook: Sync local changes to remote repo and commit there
+# This runs when you commit in the LOCAL repo (common)
+
+set -e
+
+# Get script directory (local repo root - common)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REMOTE_REPO_DIR="$(cd "$LOCAL_REPO_DIR/../.." && pwd)/tg-promo-helper"
+
+# Check if remote repo exists
+if [ ! -d "$REMOTE_REPO_DIR" ]; then
+  echo "⚠️  Warning: Remote repo not found at $REMOTE_REPO_DIR. Skipping pre-commit sync."
+  exit 0
+fi
+
+# Helper function to generate commit message
+generate_commit_message() {
+  local_dir="$1"
+  date=$(date +"%Y-%m-%d %H:%M:%S")
+  author=$(git config user.name 2>/dev/null || echo "unknown")
+  if [ -d "$local_dir/.git" ]; then
+    local_hash=$(git --git-dir="$local_dir/.git" rev-parse --short HEAD 2>/dev/null || echo "no-local-hash")
+  else
+    local_hash="no-local-git"
+  fi
+  echo "SYNC from local: local-commit=${local_hash} author=${author} date=${date}"
+}
+
+echo "🔄 Pre-commit: Syncing staged files from local to remote repo..."
+
+# Get list of staged files in local repo
+cd "$LOCAL_REPO_DIR"
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || echo "")
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "ℹ️  No staged files to sync"
+  exit 0
+fi
+
+echo "📋 Staged files to sync:"
+echo "$STAGED_FILES" | head -10
+if [ "$(echo "$STAGED_FILES" | wc -l)" -gt 10 ]; then
+  echo "... (and more)"
+fi
+
+# Copy each staged file from local to remote
+cd "$LOCAL_REPO_DIR"
+echo "$STAGED_FILES" | while IFS= read -r file; do
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    # Get destination path
+    dest_file="${REMOTE_REPO_DIR}/${file}"
+    dest_dir="$(dirname "$dest_file")"
+
+    # Create destination directory if needed
+    mkdir -p "$dest_dir"
+
+    # Copy file (force overwrite)
+    cp -f "$file" "$dest_file" 2>/dev/null && echo "  ✓ Synced: $file" || echo "  ✗ Failed: $file"
+  fi
+done
+
+# Check if sync brought in new changes in remote repo
+cd "$REMOTE_REPO_DIR"
+if [ -n "$(git status --porcelain)" ]; then
+  echo "📦 Staging synced files in remote repo..."
+  # Stage only the files that were synced
+  echo "$STAGED_FILES" | while IFS= read -r file; do
+    if [ -n "$file" ] && [ -f "$file" ]; then
+      git add "$file" 2>/dev/null || true
+    fi
+  done
+
+  # Get commit message from temp file (saved by prepare-commit-msg hook)
+  LOCAL_COMMIT_MSG=""
+  COMMIT_MSG_FILE="${LOCAL_REPO_DIR}/.git/COMMIT_MSG_TEMP"
+  if [ -f "$COMMIT_MSG_FILE" ]; then
+    LOCAL_COMMIT_MSG=$(head -1 "$COMMIT_MSG_FILE" 2>/dev/null || echo "")
+    rm -f "$COMMIT_MSG_FILE" 2>/dev/null || true
+  fi
+
+  # Fallback: try to get from COMMIT_EDITMSG
+  if [ -z "$LOCAL_COMMIT_MSG" ] && [ -f "$LOCAL_REPO_DIR/.git/COMMIT_EDITMSG" ]; then
+    LOCAL_COMMIT_MSG=$(head -1 "$LOCAL_REPO_DIR/.git/COMMIT_EDITMSG" 2>/dev/null || echo "")
+  fi
+
+  if [ -n "$LOCAL_COMMIT_MSG" ] && ! echo "$LOCAL_COMMIT_MSG" | grep -q "^SYNC:" && ! echo "$LOCAL_COMMIT_MSG" | grep -q "^Merge"; then
+    # Use local commit message with sync prefix
+    COMMIT_MSG="SYNC: $LOCAL_COMMIT_MSG"
+  else
+    # Fallback: generate commit message
+    COMMIT_MSG=$(generate_commit_message "$LOCAL_REPO_DIR")
+  fi
+
+  echo "💾 Committing in remote repo: $COMMIT_MSG"
+  # Set environment variable to skip sync check in remote repo
+  SKIP_SYNC_CHECK=1 git commit -m "$COMMIT_MSG" || {
+    echo "❌ Failed to commit in remote repo. Aborting local commit."
+    exit 1
+  }
+
+  echo "✅ Synced and committed changes in remote repo"
+else
+  echo "✅ Remote repo is already in sync"
+fi
+
+exit 0

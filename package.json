@@ -35,7 +35,8 @@
     "clean": "rm -rf dist",
     "test": "jest",
     "test:coverage": "jest --coverage",
-    "prepublishOnly": "npm run clean && npm run build && npm test"
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "prepare": "node -e \"if (process.env.CI) { process.exit(0); } const fs = require('fs'); const path = require('path'); const huskyPath = path.join(process.cwd(), 'node_modules', '.bin', 'husky'); if (fs.existsSync(huskyPath)) { require('child_process').execSync('husky', { stdio: 'ignore' }); }\""
   },
   "keywords": [
     "telegram",
@@ -59,6 +60,7 @@
     "@types/ioredis-mock": "^8.2.7",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
+    "husky": "^9.1.7",
     "ioredis": "^5.7.0",
     "ioredis-mock": "^8.13.1",
     "jest": "^30.3.0",

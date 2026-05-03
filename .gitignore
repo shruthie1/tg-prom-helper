@@ -4,8 +4,5 @@ coverage
 *.log
 sync.log
 sync-errors.log
-sync-git.log
-sync-git-errors.log
-.sync-state
 .DS_Store
 .env
