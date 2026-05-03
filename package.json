@@ -1,0 +1,73 @@
+{
+  "name": "tg-promo-helper",
+  "version": "1.0.0",
+  "description": "Shared promotion intelligence — channel scoring, percentile engine, Thompson Sampling, Redis locks, conversion attribution",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js"
+    },
+    "./channel-intelligence": {
+      "types": "./dist/channel-intelligence/index.d.ts",
+      "require": "./dist/channel-intelligence/index.js"
+    },
+    "./message-strategy": {
+      "types": "./dist/message-strategy/index.d.ts",
+      "require": "./dist/message-strategy/index.js"
+    },
+    "./scoring": {
+      "types": "./dist/scoring/index.d.ts",
+      "require": "./dist/scoring/index.js"
+    },
+    "./redis": {
+      "types": "./dist/redis/index.d.ts",
+      "require": "./dist/redis/index.js"
+    },
+    "./attribution": {
+      "types": "./dist/attribution/index.d.ts",
+      "require": "./dist/attribution/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "keywords": [
+    "telegram",
+    "promotion",
+    "channel-intelligence",
+    "thompson-sampling",
+    "percentile",
+    "scoring",
+    "attribution"
+  ],
+  "author": "SaiKumar Shetty",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "ioredis": ">=5.0.0",
+    "mongodb": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@types/ioredis-mock": "^8.2.7",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "ioredis": "^5.7.0",
+    "ioredis-mock": "^8.13.1",
+    "jest": "^30.3.0",
+    "mongodb": "^6.18.0",
+    "mongodb-memory-server": "^11.1.0",
+    "ts-jest": "^29.4.9",
+    "typescript": "^5.5.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
