@@ -28,3 +28,4 @@ Apps own Telegram clients, message materialization, Mongo/Redis instances, and p
 Use `PromotionRunnerSupervisor` around each account runner when the host app needs 24/7 behavior. The supervisor recreates runners after exit, applies restart backoff, can pause through `shouldRun()`, and can stop a runner that has no recent activity through `stuckAfterMs`.
 
 Telegram reconnect/session repair still belongs in the host app because the host owns the Telegram client. Wire that into `shouldRun()`, `createRunner()`, and the supervisor hooks.
+# tg-prom-helper
