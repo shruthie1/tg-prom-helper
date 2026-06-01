@@ -1,6 +1,6 @@
 import { type ChannelIntelligenceDocument, type MessageStrategy } from '../channel-intelligence';
 import { DiscountedThompsonSampling, PROMOTION_MESSAGE_STRATEGIES, selectChannelStrategy } from '../message-strategy';
-import { selectPromotionChannels } from '../selection';
+import { selectPromotionChannels, type ChannelSelectionResult } from '../selection';
 import {
   calculateHealthBasedPromotionDelay,
   calculatePromotionBatchLimit,
@@ -204,6 +204,7 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
         intelligenceDocs,
         batchTarget,
       });
+      const selectionDiagnostics = this.describeSelection(selection, intelligenceDocs);
       this.log('info', [
         'Promotion selection ready',
         `loaded=${channels.length}`,
@@ -215,10 +216,17 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
         `untested=${selection.untested.length}`,
         `stale=${selection.stale.length}`,
         `skipped=${selection.skipped.length}`,
+        `skipBreakdown=${selectionDiagnostics.skipBreakdown}`,
         `explorePct=${selection.explorePercent.toFixed(2)}`,
         `reEvalPct=${selection.reEvalPercent.toFixed(2)}`,
         `stats=${this.formatStats(stats)}`,
       ].join('; '));
+      if (selectionDiagnostics.selectedSample !== 'none') {
+        this.log('debug', `Promotion selected channel sample; ${selectionDiagnostics.selectedSample}`);
+      }
+      if (selectionDiagnostics.skippedSample !== 'none') {
+        this.log('debug', `Promotion skipped channel sample; ${selectionDiagnostics.skippedSample}`);
+      }
 
       for (const channel of selection.selected) {
         if (this.startedByStart && !this.running) {
@@ -795,6 +803,85 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     return `success=${stats.successCount},failed=${stats.failedCount},failStreak=${stats.failStreak},daysLeft=${stats.daysLeft}`;
   }
 
+  private describeSelection(
+    selection: ChannelSelectionResult<TChannel>,
+    intelligenceDocs: ChannelIntelligenceDocument[],
+  ): { skipBreakdown: string; selectedSample: string; skippedSample: string } {
+    const intelligenceByChannel = new Map<string, ChannelIntelligenceDocument>();
+    for (const doc of intelligenceDocs) {
+      const channelId = normalizeChannelId(doc.channelId);
+      if (channelId) intelligenceByChannel.set(channelId, doc);
+    }
+
+    const proven = this.toChannelIdSet(selection.proven);
+    const untested = this.toChannelIdSet(selection.untested);
+    const stale = this.toChannelIdSet(selection.stale);
+    const skipCounts = new Map<string, number>();
+    for (const channel of selection.skipped) {
+      const reason = this.getSkippedSelectionReason(channel, intelligenceByChannel).bucket;
+      skipCounts.set(reason, (skipCounts.get(reason) ?? 0) + 1);
+    }
+
+    return {
+      skipBreakdown: this.formatCounts(skipCounts),
+      selectedSample: this.summarizeSelectionChannels(selection.selected, (channel) => {
+        const channelId = normalizeChannelId(channel.channelId);
+        if (channelId && proven.has(channelId)) return 'proven';
+        if (channelId && untested.has(channelId)) return 'untested';
+        if (channelId && stale.has(channelId)) return 'stale';
+        return 'backfill';
+      }),
+      skippedSample: this.summarizeSelectionChannels(selection.skipped, (channel) => {
+        return this.getSkippedSelectionReason(channel, intelligenceByChannel).sample;
+      }),
+    };
+  }
+
+  private toChannelIdSet(channels: PromotionChannelSnapshot[]): Set<string> {
+    const ids = new Set<string>();
+    for (const channel of channels) {
+      const channelId = normalizeChannelId(channel.channelId);
+      if (channelId) ids.add(channelId);
+    }
+    return ids;
+  }
+
+  private getSkippedSelectionReason(
+    channel: PromotionChannelSnapshot,
+    intelligenceByChannel: Map<string, ChannelIntelligenceDocument>,
+  ): { bucket: string; sample: string } {
+    const channelId = normalizeChannelId(channel.channelId);
+    if (!channelId) return { bucket: 'invalid-channel-id', sample: 'invalid-channel-id' };
+    const doc = intelligenceByChannel.get(channelId);
+    if (!doc) return { bucket: 'duplicate-or-invalid', sample: 'duplicate-or-invalid' };
+    if (doc.stage === 'hostile') return { bucket: 'hostile', sample: 'hostile' };
+    const cooldownUntil = typeof doc.cooldownUntil === 'number' ? doc.cooldownUntil : 0;
+    if (cooldownUntil > Date.now()) {
+      const cooldownMinutes = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 60_000));
+      return { bucket: 'cooldown', sample: `cooldown:${cooldownMinutes}m` };
+    }
+    return { bucket: 'selection-filter', sample: `selection-filter:${doc.stage}` };
+  }
+
+  private summarizeSelectionChannels(
+    channels: PromotionChannelSnapshot[],
+    label: (channel: PromotionChannelSnapshot) => string,
+  ): string {
+    if (channels.length === 0) return 'none';
+    return channels
+      .slice(0, 8)
+      .map((channel) => `${this.formatCompactChannel(channel)}:${label(channel)}`)
+      .join('|');
+  }
+
+  private formatCounts(counts: Map<string, number>): string {
+    if (counts.size === 0) return 'none';
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, count]) => `${reason}:${count}`)
+      .join('|');
+  }
+
   private formatChannel(channel: PromotionChannelSnapshot): string {
     return [
       `channelId=${channel.channelId}`,
@@ -804,6 +891,14 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
       `success=${channel.successMsgCount ?? 0}`,
       `failures=${channel.failureMsgCount ?? 0}`,
     ].join(' ');
+  }
+
+  private formatCompactChannel(channel: PromotionChannelSnapshot): string {
+    return [
+      `channelId=${channel.channelId}`,
+      `username=${channel.username ?? 'unknown'}`,
+      `participants=${channel.participantsCount ?? 'unknown'}`,
+    ].join(',');
   }
 
   private formatCandidate(candidate: PromotionMessageCandidate): string {
