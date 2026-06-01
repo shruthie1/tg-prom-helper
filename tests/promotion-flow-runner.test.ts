@@ -450,6 +450,73 @@ describe('PromotionFlowRunner', () => {
     runner.stop();
   });
 
+  it('uses short retry delay after failed sends and normal delay after successful sends', async () => {
+    const collection = new CollectionMock<ChannelIntelligenceDocument>();
+    collection.docs.set('fail-first', createDefaultIntelligence('fail-first'));
+    collection.docs.set('send-second', createDefaultIntelligence('send-second'));
+    const account = await createAccount(collection);
+    const channels: TestChannel[] = [
+      {
+        channelId: 'fail-first',
+        participantsCount: 1000,
+        canSendMsgs: true,
+        availableMsgs: ['0'],
+      },
+      {
+        channelId: 'send-second',
+        participantsCount: 1000,
+        canSendMsgs: true,
+        availableMsgs: ['0'],
+      },
+    ];
+    const sleeps: number[] = [];
+    const sentChannels: string[] = [];
+    let attempts = 0;
+
+    const adapter: PromotionFlowAdapter<TestChannel> = {
+      isActive: () => true,
+      getStats: () => ({ successCount: 0, failedCount: 0, failStreak: 0, daysLeft: 1 }),
+      loadChannels: async () => channels,
+      getChannel: async (channelId) => channels.find((channel) => channel.channelId === channelId) || null,
+      getIntelligenceDocs: async () => channels.map((channel) => collection.docs.get(channel.channelId)!),
+      getIntelligenceDoc: async (channelId) => collection.docs.get(channelId) || null,
+      sendPromotion: async ({ channel, candidate }) => {
+        attempts++;
+        sentChannels.push(channel.channelId);
+        if (attempts === 1) {
+          return {
+            sent: false,
+            messageIndex: candidate.randomIndex,
+            errorMessage: 'USER_BANNED_IN_CHANNEL',
+            terminal: true,
+          };
+        }
+        return { sent: true, messageId: 202, messageIndex: candidate.randomIndex };
+      },
+      checkMessage: async () => ({ status: 'exists' }),
+      sleep: async (ms) => { sleeps.push(ms); },
+    };
+
+    const runner = new PromotionFlowRunner(adapter, {
+      account,
+      scoringEnabled: false,
+      messageBanditEnabled: false,
+      redisLockEnabled: false,
+      attributionEnabled: false,
+      batchTarget: 2,
+      channelLoopDelayMs: 120_000,
+    });
+
+    await runner.runOnce();
+
+    expect(sentChannels).toHaveLength(2);
+    expect(sleeps).toHaveLength(2);
+    expect(sleeps[0]).toBeGreaterThanOrEqual(5_000);
+    expect(sleeps[0]).toBeLessThanOrEqual(10_000);
+    expect(sleeps[1]).toBe(120_000);
+    runner.stop();
+  });
+
   it('isolates send-success hook failures from attribution and lock accounting', async () => {
     const collection = new CollectionMock<ChannelIntelligenceDocument>();
     collection.docs.set('ch1b', createDefaultIntelligence('ch1b'));
@@ -3690,7 +3757,7 @@ describe('PromotionFlowRunner', () => {
       batchTarget: 1,
     });
 
-    await expect(runner.processChannel({ channelId: '   ' } as TestChannel, false)).resolves.toBeUndefined();
+    await expect(runner.processChannel({ channelId: '   ' } as TestChannel, false)).resolves.toBe('skipped');
 
     expect(sendAttempts).toBe(0);
     expect(warnings).toEqual(expect.arrayContaining([

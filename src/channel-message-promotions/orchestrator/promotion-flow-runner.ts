@@ -29,11 +29,15 @@ import { PromotionMessageQueue } from './promotion-message-queue';
 import { normalizeChannelId } from '../utils/channel-id';
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const FAILED_CHANNEL_RETRY_MIN_MS = 5_000;
+const FAILED_CHANNEL_RETRY_MAX_MS = 10_000;
 
 interface ReadyMessage {
   message: PromotionQueuedMessage;
   original: PromotionQueuedMessage;
 }
+
+type ChannelProcessOutcome = 'sent' | 'not_sent' | 'skipped';
 
 export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
   private readonly messageQueue: PromotionMessageQueue;
@@ -234,8 +238,8 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
           break;
         }
         if (!(await this.shouldProcessNextChannel(channel))) break;
-        await this.processChannel(channel, false);
-        await this.sleepAfterChannel();
+        const outcome = await this.processChannel(channel, false);
+        await this.sleepAfterChannel(outcome);
       }
     } finally {
       this.health.totalCycles += 1;
@@ -243,15 +247,15 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     }
   }
 
-  async processChannel(rawChannel: TChannel, isFollowUp: boolean): Promise<void> {
+  async processChannel(rawChannel: TChannel, isFollowUp: boolean): Promise<ChannelProcessOutcome> {
     const channel = normalizeChannel<TChannel>(rawChannel);
     if (!channel) {
       this.log('warn', `Promotion channel attempt skipped; malformed channel=${this.safeJson(rawChannel)}`);
-      return;
+      return 'skipped';
     }
     this.log('debug', `Promotion channel attempt start; ${this.formatChannel(channel)} isFollowUp=${isFollowUp}`);
     const eligible = await this.evaluateEligibility(channel);
-    if (!eligible) return;
+    if (!eligible) return 'skipped';
 
     const stats = await this.getStatsOrDefault('message planning');
     let doc = null;
@@ -288,26 +292,27 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     for (const candidate of candidates) {
       if (this.shouldAbortStartedRunnerWork()) {
         this.log('debug', `Promotion candidate loop interrupted because runner stopped; ${this.formatChannel(channel)}`);
-        return;
+        return 'skipped';
       }
       const result = await this.trySendPromotion(channel, candidate, isFollowUp);
       if (this.shouldAbortStartedRunnerWork()) {
         this.log('debug', `Promotion send result ignored because runner stopped; ${this.formatChannel(channel)} candidate=${this.formatCandidate(candidate)}`);
-        return;
+        return 'skipped';
       }
       if (result.sent) {
         await this.recordSuccess(channel, candidate, result, isFollowUp);
-        return;
+        return 'sent';
       }
       if (result.errorMessage) {
         await this.recordFailure(channel, candidate, result.errorMessage, isFollowUp);
       }
       if (result.terminal) {
         this.log('debug', `Promotion candidate loop stopped after terminal failure; ${this.formatChannel(channel)} candidate=${this.formatCandidate(candidate)}`);
-        return;
+        return 'not_sent';
       }
     }
     this.log('warn', `Promotion exhausted candidates without send; ${this.formatChannel(channel)} isFollowUp=${isFollowUp} attempts=${candidates.length}`);
+    return 'not_sent';
   }
 
   async checkQueuedMessages(): Promise<void> {
@@ -727,7 +732,13 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     }
   }
 
-  private async sleepAfterChannel(): Promise<void> {
+  private async sleepAfterChannel(outcome: ChannelProcessOutcome): Promise<void> {
+    if (outcome !== 'sent') {
+      const delayMs = randomIntInclusive(FAILED_CHANNEL_RETRY_MIN_MS, FAILED_CHANNEL_RETRY_MAX_MS);
+      this.log('debug', `Promotion retry delay ${delayMs}ms (${outcome})`);
+      await this.sleep(delayMs);
+      return;
+    }
     if (!this.options.scoringEnabled) {
       await this.sleep(safeDelayMs(this.options.channelLoopDelayMs, 5000));
       return;
@@ -946,6 +957,12 @@ function safeBatchTarget(value: number | undefined, policyLimit: number): number
 function safeDelayMs(value: number | undefined, fallback: number): number {
   if (value !== undefined && Number.isFinite(value) && value >= 0) return Math.floor(value);
   return safeNonNegativeInt(fallback);
+}
+
+function randomIntInclusive(min: number, max: number): number {
+  const safeMin = safeNonNegativeInt(min);
+  const safeMax = Math.max(safeMin, safeNonNegativeInt(max));
+  return safeMin + Math.floor(Math.random() * (safeMax - safeMin + 1));
 }
 
 function safeIntervalMs(value: number | undefined, fallback: number): number {
