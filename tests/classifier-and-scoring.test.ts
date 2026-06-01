@@ -1,8 +1,6 @@
-import { ChannelClassifier } from '../src/channel-intelligence/channel-classifier';
-import { computeExpectedValue } from '../src/scoring/expected-value';
-import { createDefaultIntelligence } from '../src/channel-intelligence/channel-intelligence.types';
-import type { ChannelIntelligenceDocument } from '../src/channel-intelligence/channel-intelligence.types';
-import type { ChannelPercentiles } from '../src/types';
+import { ChannelClassifier, createDefaultIntelligence, type ChannelIntelligenceDocument } from '../src';
+import { computeExpectedValue } from '../src';
+import type { ChannelPercentiles } from '../src';
 
 function makeDoc(overrides: Partial<ChannelIntelligenceDocument> = {}): ChannelIntelligenceDocument {
   return { ...createDefaultIntelligence('test'), ...overrides } as ChannelIntelligenceDocument;
@@ -43,6 +41,12 @@ describe('ChannelClassifier', () => {
       expect(r.category).toBe('unclassified');
     });
 
+    it('handles malformed title and username values from JavaScript callers', () => {
+      const r = ChannelClassifier.classify(123 as unknown as string, {} as unknown as string, null);
+      expect(r.category).toBe('unclassified');
+      expect(r.confidence).toBe(0);
+    });
+
     it('single high-intent keyword with no off-topic = high_intent', () => {
       const r = ChannelClassifier.classify('dating chat', null, null);
       // dating = high_intent, chat = social_chat
@@ -69,6 +73,28 @@ describe('ChannelClassifier', () => {
 
       // Title says "crypto" (off_topic) but performance says high_intent
       const r = ChannelClassifier.classify('Crypto Group', null, doc);
+      expect(r.category).toBe('high_intent');
+      expect(r.confidence).toBeGreaterThan(0.5);
+    });
+
+    it('paid conversions carry stronger performance intent than generic conversions', () => {
+      const doc = makeDoc({
+        stage: 'optimized',
+        strategies: {
+          ai_contextual: { s: 5, f: 5, n: 10 },
+          markov_chain: { s: 0, f: 0, n: 0 },
+          natural_template: { s: 0, f: 0, n: 0 },
+          question_doubt: { s: 0, f: 0, n: 0 },
+          curiosity_gap: { s: 0, f: 0, n: 0 },
+          legacy: { s: 0, f: 0, n: 0 },
+        },
+        conversions: 0,
+        paidConversions: 1,
+        expectedValue: 0.5,
+      });
+
+      const r = ChannelClassifier.classify('Crypto Group', null, doc);
+
       expect(r.category).toBe('high_intent');
       expect(r.confidence).toBeGreaterThan(0.5);
     });
@@ -154,6 +180,42 @@ describe('ChannelClassifier', () => {
       // totalPulls=3 < 10, so keywords apply: crypto+news = off_topic
       expect(r.category).toBe('off_topic');
     });
+
+    it('treats malformed cached EV and counters as neutral performance data', () => {
+      const doc = makeDoc({
+        stage: 'optimized',
+        strategies: {
+          ai_contextual: { s: 10, f: 0, n: Number.NaN },
+          markov_chain: { s: 0, f: 0, n: -20 },
+          natural_template: { s: 0, f: 0, n: 0 },
+          question_doubt: { s: 0, f: 0, n: 0 },
+          curiosity_gap: { s: 0, f: 0, n: 0 },
+          legacy: { s: 0, f: 0, n: 0 },
+        },
+        conversions: -5,
+        expectedValue: 5,
+      });
+
+      const r = ChannelClassifier.classify('Crypto News Finance', null, doc);
+      expect(r.category).toBe('off_topic');
+      expect(r.confidence).toBeGreaterThan(0);
+      expect(r.promotionFitScore).toBeGreaterThanOrEqual(0);
+      expect(r.promotionFitScore).toBeLessThanOrEqual(1);
+    });
+
+    it('falls back to keyword classification when stored strategy state is malformed', () => {
+      const doc = makeDoc({
+        stage: 'optimized',
+        strategies: null as unknown as ChannelIntelligenceDocument['strategies'],
+        conversions: 2,
+        expectedValue: 0.9,
+      });
+
+      const r = ChannelClassifier.classify('Crypto News Finance', null, doc);
+
+      expect(r.category).toBe('off_topic');
+      expect(r.confidence).toBeGreaterThan(0);
+    });
   });
 
   describe('promotionFitScore', () => {
@@ -210,6 +272,32 @@ describe('computeExpectedValue', () => {
     });
     const ev = computeExpectedValue(doc);
     expect(ev).toBeGreaterThan(0.8);
+  });
+
+  it('ignores historical strategy arms that the current sender cannot materialize', () => {
+    const unsupportedOnly = makeDoc({
+      strategies: {
+        ai_contextual: { s: 0, f: 0, n: 0 },
+        markov_chain: { s: 100, f: 0, n: 100 },
+        natural_template: { s: 0, f: 0, n: 0 },
+        question_doubt: { s: 100, f: 0, n: 100 },
+        curiosity_gap: { s: 100, f: 0, n: 100 },
+        legacy: { s: 0, f: 0, n: 0 },
+      },
+    });
+    const supportedSuccess = makeDoc({
+      strategies: {
+        ai_contextual: { s: 20, f: 0, n: 20 },
+        markov_chain: { s: 0, f: 0, n: 0 },
+        natural_template: { s: 0, f: 0, n: 0 },
+        question_doubt: { s: 0, f: 0, n: 0 },
+        curiosity_gap: { s: 0, f: 0, n: 0 },
+        legacy: { s: 0, f: 0, n: 0 },
+      },
+    });
+
+    expect(computeExpectedValue(unsupportedOnly)).toBeCloseTo(0.5, 3);
+    expect(computeExpectedValue(supportedSuccess)).toBeGreaterThan(0.9);
   });
 
   it('applies followup bonus when enough data', () => {
@@ -277,6 +365,15 @@ describe('computeExpectedValue', () => {
     expect(computeExpectedValue(engaged)).toBeGreaterThan(computeExpectedValue(stale));
   });
 
+  it('does not turn low recent view engagement into an implicit penalty', () => {
+    const lowViews = makeDoc({
+      viewEngagement: { ewmaRatio: 0.1, lastChecked: Date.now() - 10 * 60000, checksCount: 5 },
+    });
+    const noViews = makeDoc();
+
+    expect(computeExpectedValue(lowViews)).toBeCloseTo(computeExpectedValue(noViews), 3);
+  });
+
   it('applies category bonus for high_intent', () => {
     const hi = makeDoc({ channelCategory: 'high_intent' });
     const unclassified = makeDoc({ channelCategory: 'unclassified' });
@@ -316,6 +413,60 @@ describe('computeExpectedValue', () => {
     expect(computeExpectedValue(minDoc)).toBeGreaterThanOrEqual(0.01);
   });
 
+  it('keeps malformed metric values bounded without accidental boosts or penalties', () => {
+    const malformed = makeDoc({
+      strategies: {
+        ai_contextual: { s: Number.NaN, f: Number.POSITIVE_INFINITY, n: 10 },
+        markov_chain: { s: -10, f: -5, n: 10 },
+        natural_template: { s: 0, f: 0, n: 0 },
+        question_doubt: { s: 0, f: 0, n: 0 },
+        curiosity_gap: { s: 0, f: 0, n: 0 },
+        legacy: { s: 0, f: 0, n: 0 },
+      },
+      followupTotal: Number.NaN,
+      followupSuccessRate: 99,
+      deletionTiming: { automod: Number.NaN, bot: -1, human: 0, late: 0 },
+      onlineTrend: { ewma: Number.POSITIVE_INFINITY, lastSampled: Date.now(), sampleCount: 5 },
+      viewEngagement: { ewmaRatio: Number.NaN, lastChecked: Date.now(), checksCount: Number.NaN },
+      errors: { consecutiveErrors: -10 },
+      conversions: Number.NaN,
+      totalSendsToChannel: Number.NaN,
+      saturationRate: Number.NaN,
+    } as Partial<ChannelIntelligenceDocument>);
+
+    expect(computeExpectedValue(malformed)).toBeCloseTo(0.5, 3);
+  });
+
+  it('does not award freshness bonuses for future-dated online or view timestamps', () => {
+    const future = Date.now() + 60 * 60_000;
+    const futureSignals = makeDoc({
+      onlineTrend: { ewma: 500, lastSampled: future, sampleCount: 5 },
+      viewEngagement: { ewmaRatio: 0.95, lastChecked: future, checksCount: 5 },
+    });
+    const noSignals = makeDoc();
+
+    expect(computeExpectedValue(futureSignals)).toBeCloseTo(computeExpectedValue(noSignals), 3);
+  });
+
+  it('handles missing nested scoring state from untyped callers', () => {
+    const malformed = {
+      channelId: 'missing-nested',
+      channelCategory: 123,
+      strategies: null,
+      deletionTiming: null,
+      onlineTrend: null,
+      viewEngagement: null,
+      errors: null,
+    } as unknown as ChannelIntelligenceDocument;
+
+    expect(computeExpectedValue(malformed)).toBeCloseTo(0.5, 3);
+  });
+
+  it('handles malformed top-level scoring documents from untyped callers', () => {
+    expect(computeExpectedValue(null as unknown as ChannelIntelligenceDocument)).toBeCloseTo(0.5, 3);
+    expect(computeExpectedValue([] as unknown as ChannelIntelligenceDocument)).toBeCloseTo(0.5, 3);
+  });
+
   describe('with percentiles', () => {
     const mockPercentiles: ChannelPercentiles = {
       successRate: { p10: 0.1, p25: 0.3, p50: 0.5, p75: 0.7, p90: 0.9, count: 100 },
@@ -343,6 +494,40 @@ describe('computeExpectedValue', () => {
       const withP = computeExpectedValue(doc, mockPercentiles, mockGetRank);
       const withoutP = computeExpectedValue(doc);
       expect(withP).toBeGreaterThan(withoutP);
+    });
+
+    it('uses conversions per send rather than raw conversion count', () => {
+      const ranks: Array<{ value: number; metric: keyof ChannelPercentiles }> = [];
+      const captureRank = (value: number, metric: keyof ChannelPercentiles): number => {
+        ranks.push({ value, metric });
+        return mockGetRank(value, metric);
+      };
+
+      computeExpectedValue(
+        makeDoc({ conversions: 5, totalSendsToChannel: 500 }),
+        mockPercentiles,
+        captureRank,
+      );
+
+      const conversionRankInput = ranks.find(r => r.metric === 'conversionRate');
+      expect(conversionRankInput?.value).toBeCloseTo(0.01, 5);
+    });
+
+    it('counts paid conversions as stronger conversion-rate evidence', () => {
+      const ranks: Array<{ value: number; metric: keyof ChannelPercentiles }> = [];
+      const captureRank = (value: number, metric: keyof ChannelPercentiles): number => {
+        ranks.push({ value, metric });
+        return mockGetRank(value, metric);
+      };
+
+      computeExpectedValue(
+        makeDoc({ conversions: 1, paidConversions: 2, totalSendsToChannel: 100 }),
+        mockPercentiles,
+        captureRank,
+      );
+
+      const conversionRankInput = ranks.find(r => r.metric === 'conversionRate');
+      expect(conversionRankInput?.value).toBeCloseTo(0.05, 5);
     });
 
     it('applies saturation penalty above p75', () => {
@@ -379,6 +564,19 @@ describe('computeExpectedValue', () => {
       const withoutP = computeExpectedValue(doc);
       // p50-p75 gets 0.08 bonus
       expect(withP).toBeGreaterThan(withoutP);
+    });
+
+    it('neutralizes throwing or malformed percentile rank callbacks', () => {
+      const doc = makeDoc({ conversions: 5, totalSendsToChannel: 10, saturationRate: 99 });
+      const throwingRank = () => { throw new Error('rank unavailable'); };
+      const malformedRank = () => Number.NaN;
+
+      expect(computeExpectedValue(doc, mockPercentiles, throwingRank)).toBeCloseTo(
+        computeExpectedValue(doc, mockPercentiles, malformedRank),
+        5,
+      );
+      expect(computeExpectedValue(doc, mockPercentiles, throwingRank)).toBeGreaterThanOrEqual(0.01);
+      expect(computeExpectedValue(doc, mockPercentiles, throwingRank)).toBeLessThanOrEqual(0.99);
     });
   });
 

@@ -1,6 +1,4 @@
-export * from './channel-message-promotions';
-
-export type { ChannelPercentiles, PercentileBuckets } from './types';
+export type { ChannelPercentiles, PercentileBuckets } from './percentiles';
 export type {
   AggregateableCollectionLike,
   AggregateCursorLike,
@@ -9,4 +7,4 @@ export type {
   RedisExistsResult,
   RedisLike,
   RedisPipelineLike,
-} from './types';
+} from './runtime';

@@ -3,9 +3,9 @@ import {
   betaSample,
   selectChannelStrategy,
   COLD_START_THRESHOLD,
-} from '../src/message-strategy/message-strategy-selector';
-import type { MessageStrategy, ChannelIntelligenceDocument } from '../src/channel-intelligence/channel-intelligence.types';
-import { createDefaultIntelligence } from '../src/channel-intelligence/channel-intelligence.types';
+} from '../src';
+import type { MessageStrategy, ChannelIntelligenceDocument } from '../src';
+import { createDefaultIntelligence } from '../src';
 
 const ALL_STRATEGIES: MessageStrategy[] = [
   'ai_contextual', 'markov_chain', 'natural_template',
@@ -48,6 +48,11 @@ describe('betaSample', () => {
     expect(v).toBeGreaterThanOrEqual(0.001);
     expect(v).toBeLessThanOrEqual(0.999);
   });
+
+  it('normalizes malformed beta parameters and random output', () => {
+    expect(betaSample(Number.NaN, Number.POSITIVE_INFINITY, () => Number.NaN)).toBeGreaterThanOrEqual(0.001);
+    expect(betaSample(-1, 0, () => { throw new Error('random failed'); })).toBeLessThanOrEqual(0.999);
+  });
 });
 
 describe('DiscountedThompsonSampling', () => {
@@ -87,6 +92,34 @@ describe('DiscountedThompsonSampling', () => {
       const statsAfter = bandit.getStats();
       // Successes should NOT change from selection
       expect(statsAfter['ai_contextual'].successes).toBe(sBeforeSelect);
+    });
+
+    it('dedupes invalid constructor strategies and keeps a valid fallback arm', () => {
+      const malformedBandit = new DiscountedThompsonSampling([
+        'legacy',
+        ' legacy ' as MessageStrategy,
+        'legacy',
+        '' as MessageStrategy,
+        'bad' as MessageStrategy,
+      ]);
+
+      malformedBandit.update('legacy', 1);
+
+      expect(malformedBandit.selectArm().strategy).toBe('legacy');
+      expect(malformedBandit.serialize()).toEqual([{
+        strategy: 'legacy',
+        successes: 1,
+        failures: 0,
+        totalPulls: 1,
+      }]);
+    });
+
+    it('ignores malformed constructor config from JavaScript callers', () => {
+      const malformedBandit = new DiscountedThompsonSampling(['legacy'], null as any);
+
+      malformedBandit.update('legacy', 1);
+
+      expect(malformedBandit.getStats().legacy.totalPulls).toBe(1);
     });
   });
 
@@ -131,6 +164,21 @@ describe('DiscountedThompsonSampling', () => {
       for (const s of ALL_STRATEGIES) {
         expect(stats[s].totalPulls).toBe(0);
       }
+    });
+
+    it('ignores malformed reward values', () => {
+      bandit.update('legacy', 2 as any);
+      expect(bandit.getStats().legacy.totalPulls).toBe(0);
+    });
+
+    it('normalizes whitespace-padded direct strategy updates', () => {
+      bandit.update(' legacy ' as MessageStrategy, 1);
+      expect(bandit.getStats().legacy).toEqual({
+        successes: 1,
+        failures: 0,
+        totalPulls: 1,
+        estimatedRate: 1,
+      });
     });
   });
 
@@ -217,6 +265,62 @@ describe('DiscountedThompsonSampling', () => {
       expect(stats['ai_contextual'].totalPulls).toBe(7);
       expect(stats['legacy'].totalPulls).toBe(0); // fresh
     });
+
+    it('sanitizes malformed serialized bandit state', () => {
+      bandit.deserialize([
+        {
+          strategy: ' legacy ' as MessageStrategy,
+          successes: Number.NaN,
+          failures: -5,
+          totalPulls: Number.POSITIVE_INFINITY,
+        },
+      ]);
+
+      expect(bandit.getStats().legacy).toEqual({
+        successes: 0,
+        failures: 0,
+        totalPulls: 0,
+        estimatedRate: 0.5,
+      });
+      expect(bandit.serialize().find(arm => arm.strategy === 'legacy')).toEqual({
+        strategy: 'legacy',
+        successes: 0,
+        failures: 0,
+        totalPulls: 0,
+      });
+    });
+
+    it('ignores non-array serialized bandit state from JavaScript callers', () => {
+      bandit.update('legacy', 1);
+      const before = bandit.getStats().legacy;
+
+      expect(() => bandit.deserialize(null as any)).not.toThrow();
+
+      expect(bandit.getStats().legacy).toEqual(before);
+    });
+
+    it('ignores malformed serialized entries from JavaScript callers', () => {
+      expect(() => bandit.deserialize([
+        null,
+        123,
+        { strategy: 'bad_strategy', successes: 100, failures: 0, totalPulls: 100 },
+        { strategy: 'legacy', successes: '10', failures: Number.NaN, totalPulls: -1 },
+        { strategy: 'ai_contextual', successes: 2, failures: 1, totalPulls: 3 },
+      ] as any)).not.toThrow();
+
+      expect(bandit.getStats().legacy).toEqual({
+        successes: 0,
+        failures: 0,
+        totalPulls: 0,
+        estimatedRate: 0.5,
+      });
+      expect(bandit.getStats().ai_contextual).toEqual({
+        successes: 2,
+        failures: 1,
+        totalPulls: 3,
+        estimatedRate: 2 / 3,
+      });
+    });
   });
 });
 
@@ -249,6 +353,46 @@ describe('selectChannelStrategy', () => {
     // ai_contextual should win most — it has 50 success vs 5 failure
     expect(strategyCounts['ai_contextual'] || 0).toBeGreaterThan(20);
   });
+
+  it('ignores persisted strategy arms that the current promotion sender cannot materialize', () => {
+    const doc = createDefaultIntelligence('ch-unsupported-strategy') as ChannelIntelligenceDocument;
+    doc.strategies.markov_chain = { s: 100, f: 0, n: COLD_START_THRESHOLD + 1 };
+    doc.strategies.natural_template = { s: 1, f: 0, n: COLD_START_THRESHOLD + 1 };
+
+    const selected = Array.from({ length: 20 }, () => selectChannelStrategy(doc, globalBandit));
+
+    expect(selected).not.toContain('markov_chain');
+  });
+
+  it('falls back to global bandit when per-channel pulls are malformed', () => {
+    const doc = createDefaultIntelligence('ch-malformed') as ChannelIntelligenceDocument;
+    doc.strategies.ai_contextual = { s: 100, f: 0, n: Number.NaN };
+    const globalBandit = new DiscountedThompsonSampling(['legacy']);
+
+    expect(selectChannelStrategy(doc, globalBandit)).toBe('legacy');
+  });
+
+  it('falls back to global bandit when stored strategy state is malformed', () => {
+    const doc = createDefaultIntelligence('ch-bad-strategies') as ChannelIntelligenceDocument;
+    (doc as unknown as { strategies: unknown }).strategies = {
+      legacy: null,
+      bad_strategy: { s: 100, f: 0, n: 100 },
+    };
+    const globalBandit = new DiscountedThompsonSampling(['legacy']);
+
+    expect(selectChannelStrategy(doc, globalBandit)).toBe('legacy');
+  });
+
+  it('normalizes whitespace-padded persisted strategy keys before selection', () => {
+    const doc = createDefaultIntelligence('ch-padded-strategy') as ChannelIntelligenceDocument;
+    (doc as unknown as { strategies: unknown }).strategies = {
+      ' ai_contextual ': { s: 50, f: 1, n: COLD_START_THRESHOLD + 1 },
+    };
+
+    const selected = Array.from({ length: 20 }, () => selectChannelStrategy(doc, globalBandit));
+
+    expect(selected).toContain('ai_contextual');
+  });
 });
 
 describe('edge cases', () => {
@@ -264,6 +408,37 @@ describe('edge cases', () => {
     expect(result.sample).toBe(0);
     // Restore
     (bandit as any).arms = realArms;
+  });
+
+  it('public bandit methods tolerate corrupted arm storage', () => {
+    const bandit = new DiscountedThompsonSampling(ALL_STRATEGIES);
+    (bandit as any).arms = { [Symbol.iterator]: () => { throw new Error('boom'); } };
+
+    expect(() => bandit.update('legacy', 1)).not.toThrow();
+    expect(() => bandit.getStats()).not.toThrow();
+    expect(() => bandit.reset()).not.toThrow();
+    expect(() => bandit.serialize()).not.toThrow();
+    expect(() => bandit.deserialize([{ strategy: 'legacy', successes: 1, failures: 0, totalPulls: 1 }])).not.toThrow();
+    expect(bandit.selectArm()).toEqual({ strategy: 'legacy', sample: 0 });
+  });
+
+  it('normalizes poisoned arm counters before updating outcomes', () => {
+    const bandit = new DiscountedThompsonSampling(['legacy']);
+    (bandit as any).arms = [{
+      strategy: 'legacy',
+      successes: 'bad',
+      failures: Number.NaN,
+      totalPulls: 'bad',
+    }];
+
+    bandit.update('legacy', 1);
+
+    expect(bandit.getStats().legacy).toEqual({
+      successes: 1,
+      failures: 0,
+      totalPulls: 1,
+      estimatedRate: 1,
+    });
   });
 
   it('betaSample with extreme tiny parameters', () => {

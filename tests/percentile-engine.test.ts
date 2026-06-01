@@ -1,7 +1,7 @@
 import { Collection } from 'mongodb';
 import { setupMongo, teardownMongo, createRedis, seedActiveChannels, insertActiveChannel } from './helpers';
-import { PercentileEngine } from '../src/channel-intelligence/percentile-engine';
-import type { ChannelPercentiles } from '../src/types';
+import { PercentileEngine } from '../src';
+import type { ChannelPercentiles } from '../src';
 import type { Redis } from 'ioredis';
 
 describe('PercentileEngine', () => {
@@ -39,6 +39,33 @@ describe('PercentileEngine', () => {
       const e1 = PercentileEngine.init(activeChannels, redis);
       const e2 = PercentileEngine.init(activeChannels, redis);
       expect(e1).toBe(e2);
+    });
+
+    it('replace option swaps the singleton instance', () => {
+      const e1 = PercentileEngine.init(activeChannels, redis);
+      const e2 = PercentileEngine.init(activeChannels, redis, undefined, { replace: true });
+
+      expect(e2).not.toBe(e1);
+      expect(PercentileEngine.getInstance()).toBe(e2);
+    });
+
+    it('ignores malformed init options from JavaScript callers', () => {
+      const e1 = PercentileEngine.init(activeChannels, redis);
+      const e2 = PercentileEngine.init(activeChannels, redis, undefined, null as any);
+
+      expect(e2).toBe(e1);
+      expect(PercentileEngine.getInstance()).toBe(e1);
+    });
+
+    it('fails fast for malformed direct constructor and init dependencies', () => {
+      expect(() => new PercentileEngine(null as any, redis))
+        .toThrow('PercentileEngine active channel collection is required');
+      expect(() => new PercentileEngine(activeChannels, null as any))
+        .toThrow('PercentileEngine redis client is required');
+      expect(() => new PercentileEngine(activeChannels, redis, {} as any))
+        .toThrow('PercentileEngine intelligence collection must support aggregate');
+      expect(() => PercentileEngine.init({} as any, redis, undefined, { replace: true }))
+        .toThrow('PercentileEngine active channel collection is required');
     });
 
     it('getInstance returns instance after init', () => {
@@ -143,6 +170,41 @@ describe('PercentileEngine', () => {
       // Channel 0: (100+50)/1000 = 0.15, Channel 9: (1000+500)/1000 = 1.5
       expect(p.saturationRate.p10).toBeLessThan(p.saturationRate.p90);
     });
+
+    it('keeps valid percentile rows when active-channel counters are corrupted strings', async () => {
+      await activeChannels.insertOne({
+        channelId: 'corrupted',
+        successMsgCount: 'bad',
+        failureMsgCount: 'bad',
+        deletedCount: 'bad',
+        participantsCount: 'bad',
+        followupMsgSuccessCount: 'bad',
+      });
+      await activeChannels.insertOne({
+        channelId: 'negative-corrupted',
+        successMsgCount: -10,
+        failureMsgCount: -3,
+        deletedCount: -5,
+        participantsCount: -900,
+        followupMsgSuccessCount: -2,
+      });
+      await insertActiveChannel(activeChannels, {
+        channelId: 'valid',
+        successMsgCount: 12,
+        failureMsgCount: 3,
+        deletedCount: 1,
+        participantsCount: 900,
+        followupMsgSuccessCount: 2,
+      });
+
+      const p = await engine.getPercentiles();
+
+      expect(p.participantsCount.count).toBe(1);
+      expect(p.participantsCount.p50).toBe(900);
+      expect(p.messageVolume.count).toBe(1);
+      expect(p.messageVolume.p50).toBe(15);
+      expect(p.deletedCount.p10).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('Redis caching', () => {
@@ -203,6 +265,39 @@ describe('PercentileEngine', () => {
       expect(p.successRate).toBeDefined();
       expect(p.successRate.count).toBeGreaterThan(0);
     });
+
+    it('falls back to computation when Redis has valid JSON with invalid percentile shape', async () => {
+      await seedActiveChannels(activeChannels, 30);
+      await redis.set('percentiles:channels', JSON.stringify({
+        successRate: { p10: Number.NaN, count: 10 },
+      }), 'EX', 3600);
+      (engine as any).cache = null;
+      (engine as any).lastComputed = 0;
+
+      const p = await engine.getPercentiles();
+
+      expect(p.successRate.count).toBeGreaterThan(0);
+      expect(p.participantsCount).toBeDefined();
+    });
+
+    it('falls back to default buckets when active-channel aggregation fails or returns malformed data', async () => {
+      const throwingCollection = {
+        aggregate: () => ({ toArray: async () => { throw new Error('mongo aggregation down'); } }),
+      };
+      const malformedCollection = {
+        aggregate: () => ({ toArray: async () => null }),
+      };
+
+      const throwingEngine = new PercentileEngine(throwingCollection as any, redis);
+      const malformedEngine = new PercentileEngine(malformedCollection as any, redis);
+
+      const fromThrow = await throwingEngine.getPercentiles();
+      await redis.flushall();
+      const fromMalformed = await malformedEngine.getPercentiles();
+
+      expect(fromThrow.successRate).toEqual({ p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, count: 0 });
+      expect(fromMalformed.messageVolume).toEqual({ p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, count: 0 });
+    });
   });
 
   describe('getPercentileRank / getPercentileRankSync', () => {
@@ -259,6 +354,36 @@ describe('PercentileEngine', () => {
       // Should be between 0.25 and 0.50
       expect(rank).toBeGreaterThan(0.25);
       expect(rank).toBeLessThan(0.50);
+    });
+
+    it('clamps malformed rank inputs into safe bounds', () => {
+      expect(engine.getPercentileRankSync(-100, 'participantsCount')).toBeGreaterThanOrEqual(0);
+      expect(engine.getPercentileRankSync(Number.NaN, 'participantsCount')).toBe(0.5);
+      expect(engine.getPercentileRankSync(Number.POSITIVE_INFINITY, 'participantsCount')).toBe(0.5);
+    });
+
+    it('sanitizes malformed cached percentile buckets before ranking', () => {
+      (engine as any).cache = {
+        ...(engine.getCachedPercentiles() as ChannelPercentiles),
+        participantsCount: { p10: 1000, p25: -5, p50: 500, p75: Number.NaN, p90: 100, count: 10 },
+      };
+
+      expect(engine.getPercentileRankSync(500, 'participantsCount')).toBe(0.5);
+
+      (engine as any).cache = {
+        ...(engine.getCachedPercentiles() as ChannelPercentiles),
+        participantsCount: { p10: 1000, p25: 100, p50: 200, p75: 300, p90: 400, count: 10 },
+      };
+
+      const rank = engine.getPercentileRankSync(500, 'participantsCount');
+      expect(rank).toBeGreaterThanOrEqual(0);
+      expect(rank).toBeLessThanOrEqual(1);
+    });
+
+    it('treats malformed aggregation facet rows as empty percentile buckets', () => {
+      const buckets = (engine as any).extractBuckets([{ values: 'not-an-array', count: 5 }]);
+
+      expect(buckets).toEqual({ p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, count: 0 });
     });
   });
 

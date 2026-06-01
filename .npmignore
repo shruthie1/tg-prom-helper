@@ -1,6 +1,6 @@
 src
 tests
 coverage
-jest.config.ts
+jest.config.js
 tsconfig.json
 .gitignore

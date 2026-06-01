@@ -1,8 +1,6 @@
 import { Collection } from 'mongodb';
 import { setupMongo, teardownMongo, createRedis, seedActiveChannels } from './helpers';
-import { ChannelIntelligenceService } from '../src/channel-intelligence/channel-intelligence-service';
-import { PercentileEngine } from '../src/channel-intelligence/percentile-engine';
-import type { ChannelIntelligenceDocument } from '../src/channel-intelligence/channel-intelligence.types';
+import { ChannelIntelligenceService, createDefaultIntelligence, PercentileEngine, type ChannelIntelligenceDocument } from '../src';
 import type { Redis } from 'ioredis';
 
 describe('ChannelIntelligenceService', () => {
@@ -39,6 +37,29 @@ describe('ChannelIntelligenceService', () => {
       expect(ChannelIntelligenceService.getInstance()).toBe(s);
     });
 
+    it('replace option swaps the singleton instance', () => {
+      const first = ChannelIntelligenceService.init(intelligence);
+      const second = ChannelIntelligenceService.init(intelligence, { replace: true });
+
+      expect(second).not.toBe(first);
+      expect(ChannelIntelligenceService.getInstance()).toBe(second);
+    });
+
+    it('ignores malformed init options from JavaScript callers', () => {
+      const first = ChannelIntelligenceService.init(intelligence);
+      const second = ChannelIntelligenceService.init(intelligence, null as any);
+
+      expect(second).toBe(first);
+      expect(ChannelIntelligenceService.getInstance()).toBe(first);
+    });
+
+    it('fails fast for malformed direct constructor and init collections', () => {
+      expect(() => new ChannelIntelligenceService(null as any))
+        .toThrow('ChannelIntelligenceService collection is required');
+      expect(() => ChannelIntelligenceService.init({ findOne: () => null } as any, { replace: true }))
+        .toThrow('ChannelIntelligenceService collection is required');
+    });
+
     it('getInstance throws before init', () => {
       expect(() => ChannelIntelligenceService.getInstance()).toThrow();
     });
@@ -61,6 +82,25 @@ describe('ChannelIntelligenceService', () => {
       await service.ensureDoc('ch1');
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.stage).toBe('learning');
+    });
+
+    it('trims channel ids and ignores blank ids before creating docs', async () => {
+      await service.ensureDoc('  ch_trimmed  ');
+      await service.ensureDoc('   ');
+      await service.ensureDoc(null as unknown as string);
+
+      expect(await intelligence.findOne({ channelId: 'ch_trimmed' })).toBeTruthy();
+      expect(await intelligence.countDocuments({})).toBe(1);
+    });
+
+    it('normalizes Telegram peer-prefixed channel ids before creating or reading docs', async () => {
+      await service.ensureDoc('-10012345');
+      await service.recordSuccess('-12345', 'legacy', false);
+
+      expect(await intelligence.findOne({ channelId: '12345' })).toBeTruthy();
+      expect(await intelligence.findOne({ channelId: '-10012345' })).toBeNull();
+      expect((await service.get('12345'))!.strategies.legacy.s).toBe(1);
+      expect((await service.batchGet(['-10012345', '12345']))).toHaveLength(1);
     });
   });
 
@@ -103,6 +143,82 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.expectedValue).toBeGreaterThan(0);
       expect(doc!.scoreUpdatedAt).toBeGreaterThan(0);
     });
+
+    it('normalizes invalid success strategies to legacy before writing counters', async () => {
+      await service.recordSuccess('invalid_strategy_success', 'bad_strategy' as any, false);
+      const doc = await intelligence.findOne({ channelId: 'invalid_strategy_success' });
+
+      expect(doc!.strategies.legacy.s).toBe(1);
+      expect((doc!.strategies as Record<string, unknown>)['bad_strategy']).toBeUndefined();
+    });
+
+    it('repairs corrupted nested intelligence state before recording success', async () => {
+      await service.ensureDoc('corrupt_success');
+      await intelligence.updateOne(
+        { channelId: 'corrupt_success' },
+        { $set: {
+          strategies: null as unknown as ChannelIntelligenceDocument['strategies'],
+          deletionTiming: null as unknown as ChannelIntelligenceDocument['deletionTiming'],
+          errors: null as unknown as ChannelIntelligenceDocument['errors'],
+          onlineTrend: null as unknown as ChannelIntelligenceDocument['onlineTrend'],
+          viewEngagement: null as unknown as ChannelIntelligenceDocument['viewEngagement'],
+        }},
+      );
+
+      await service.recordSuccess('corrupt_success', 'legacy', false);
+      const doc = await intelligence.findOne({ channelId: 'corrupt_success' });
+
+      expect(doc!.strategies.legacy.s).toBe(1);
+      expect(doc!.strategies.legacy.n).toBe(1);
+      expect(doc!.errors.consecutiveErrors).toBe(0);
+      expect(doc!.expectedValue).toBeGreaterThan(0);
+    });
+
+    it('repairs corrupted numeric intelligence leaves before Mongo increment writes', async () => {
+      await service.ensureDoc('corrupt_numeric_success');
+      await intelligence.updateOne(
+        { channelId: 'corrupt_numeric_success' },
+        { $set: {
+          'strategies.legacy.s': 'bad',
+          'strategies.legacy.f': Number.NaN,
+          'strategies.legacy.n': 'bad',
+          totalSendsToChannel: 'bad' as unknown as number,
+          'deletionTiming.automod': 'bad',
+          'errors.TRANSIENT': 'bad',
+          'errors.consecutiveErrors': 'bad',
+        }},
+      );
+
+      await service.recordSuccess('corrupt_numeric_success', 'legacy', false);
+      const doc = await intelligence.findOne({ channelId: 'corrupt_numeric_success' });
+
+      expect(doc!.strategies.legacy.s).toBe(1);
+      expect(doc!.strategies.legacy.f).toBe(0);
+      expect(doc!.strategies.legacy.n).toBe(1);
+      expect(doc!.deletionTiming.automod).toBe(0);
+      expect(doc!.errors.TRANSIENT).toBe(0);
+      expect(doc!.errors.consecutiveErrors).toBe(0);
+      expect(doc!.totalSendsToChannel).toBe(1);
+    });
+
+    it('repairs corrupted follow-up success counters before Mongo increment writes', async () => {
+      await service.ensureDoc('corrupt_followup_success');
+      await intelligence.updateOne(
+        { channelId: 'corrupt_followup_success' },
+        { $set: {
+          followupTotal: 'bad' as unknown as number,
+          followupSuccessCount: Number.NaN,
+          totalSendsToChannel: 'bad' as unknown as number,
+        }},
+      );
+
+      await service.recordSuccess('corrupt_followup_success', 'legacy', true);
+      const doc = await intelligence.findOne({ channelId: 'corrupt_followup_success' });
+
+      expect(doc!.followupTotal).toBe(1);
+      expect(doc!.followupSuccessCount).toBe(1);
+      expect(doc!.totalSendsToChannel).toBe(1);
+    });
   });
 
   describe('recordDeletion', () => {
@@ -137,11 +253,39 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.deletionTiming.late).toBe(1);
     });
 
+    it('classifies malformed survival time as automod instead of late deletion', async () => {
+      await service.recordDeletion('ch_bad_survival', 'legacy', Number.NaN, false);
+      const doc = await intelligence.findOne({ channelId: 'ch_bad_survival' });
+      expect(doc!.deletionTiming.automod).toBe(1);
+      expect(doc!.deletionTiming.late).toBe(0);
+    });
+
     it('increments followupTotal on followup deletion', async () => {
       await service.recordDeletion('ch1', 'legacy', 5000, true);
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.followupTotal).toBe(1);
       // NOT followupSuccessCount — deletion is not a success
+    });
+
+    it('repairs corrupted follow-up deletion counters before Mongo increment writes', async () => {
+      await service.ensureDoc('corrupt_followup_deletion');
+      await intelligence.updateOne(
+        { channelId: 'corrupt_followup_deletion' },
+        { $set: { followupTotal: 'bad' as unknown as number } },
+      );
+
+      await service.recordDeletion('corrupt_followup_deletion', 'legacy', 5000, true);
+      const doc = await intelligence.findOne({ channelId: 'corrupt_followup_deletion' });
+
+      expect(doc!.followupTotal).toBe(1);
+    });
+
+    it('normalizes invalid deletion strategies to legacy before writing counters', async () => {
+      await service.recordDeletion('invalid_strategy_delete', 'bad_strategy' as any, 5000, false);
+      const doc = await intelligence.findOne({ channelId: 'invalid_strategy_delete' });
+
+      expect(doc!.strategies.legacy.f).toBe(1);
+      expect((doc!.strategies as Record<string, unknown>)['bad_strategy']).toBeUndefined();
     });
   });
 
@@ -161,6 +305,16 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.cooldownUntil).toBeGreaterThan(before + 6 * 24 * 3600000);
     });
 
+    it('classifies terminal Telegram channel errors as restricted cooldowns', async () => {
+      const before = Date.now();
+      await service.recordFailure('ch_forbidden', 'legacy', 'CHAT_WRITE_FORBIDDEN');
+      const doc = await intelligence.findOne({ channelId: 'ch_forbidden' });
+
+      expect(doc!.errors.CHANNEL_RESTRICTED).toBe(1);
+      expect(doc!.errors.TRANSIENT ?? 0).toBe(0);
+      expect(doc!.cooldownUntil).toBeGreaterThan(before + 6 * 24 * 3600000);
+    });
+
     it('increments consecutiveErrors', async () => {
       await service.recordFailure('ch1', 'legacy', 'TRANSIENT');
       await service.recordFailure('ch1', 'legacy', 'TRANSIENT');
@@ -173,6 +327,29 @@ describe('ChannelIntelligenceService', () => {
       await service.recordFailure('ch1', 'legacy', 'some random error');
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.errors.TRANSIENT).toBe(1);
+    });
+
+    it('normalizes malformed error type before storing failure metadata', async () => {
+      await service.recordFailure('ch1', 'legacy', null as unknown as string);
+      const doc = await intelligence.findOne({ channelId: 'ch1' });
+      expect(doc!.errors.TRANSIENT).toBe(1);
+      expect(doc!.errors.lastErrorType).toBe('TRANSIENT');
+    });
+
+    it('normalizes invalid failure strategies to legacy before writing counters', async () => {
+      await service.recordFailure('invalid_strategy_failure', 'bad_strategy' as any, 'TRANSIENT');
+      const doc = await intelligence.findOne({ channelId: 'invalid_strategy_failure' });
+
+      expect(doc!.strategies.legacy.f).toBe(1);
+      expect((doc!.strategies as Record<string, unknown>)['bad_strategy']).toBeUndefined();
+    });
+
+    it('normalizes whitespace-padded direct strategy values before Mongo writes', async () => {
+      await service.recordFailure('trimmed_strategy_failure', ' ai_contextual ' as any, 'TRANSIENT');
+      const doc = await intelligence.findOne({ channelId: 'trimmed_strategy_failure' });
+
+      expect(doc!.strategies.ai_contextual.f).toBe(1);
+      expect(doc!.strategies.legacy.f).toBe(0);
     });
   });
 
@@ -351,6 +528,43 @@ describe('ChannelIntelligenceService', () => {
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.conversions).toBeCloseTo(0.8, 1);
     });
+
+    it('ignores invalid conversion weights and clamps oversized weights', async () => {
+      await service.recordConversion('ch_invalid', -1);
+      await service.recordConversion('ch_invalid', Number.NaN);
+      expect(await intelligence.findOne({ channelId: 'ch_invalid' })).toBeNull();
+
+      await service.recordConversion('ch_invalid', 2);
+      const doc = await intelligence.findOne({ channelId: 'ch_invalid' });
+      expect(doc!.conversions).toBe(1);
+    });
+
+    it('refreshes expected value after conversion writes', async () => {
+      await service.ensureDoc('ch_score');
+      await intelligence.updateOne(
+        { channelId: 'ch_score' },
+        { $set: { expectedValue: 0.01, scoreUpdatedAt: 1 } },
+      );
+
+      await service.recordConversion('ch_score', 1);
+
+      const doc = await intelligence.findOne({ channelId: 'ch_score' });
+      expect(doc!.expectedValue).toBeGreaterThan(0.01);
+      expect(doc!.scoreUpdatedAt).toBeGreaterThan(1);
+    });
+
+    it('repairs corrupted conversion counters before Mongo increment writes', async () => {
+      await service.ensureDoc('conversion_corrupt');
+      await intelligence.updateOne(
+        { channelId: 'conversion_corrupt' },
+        { $set: { conversions: 'bad' as unknown as number } },
+      );
+
+      await service.recordConversion('conversion_corrupt', 0.5);
+
+      const doc = await intelligence.findOne({ channelId: 'conversion_corrupt' });
+      expect(doc!.conversions).toBe(0.5);
+    });
   });
 
   describe('recordPaidConversion', () => {
@@ -358,6 +572,43 @@ describe('ChannelIntelligenceService', () => {
       await service.recordPaidConversion('ch1', 1.0);
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.paidConversions).toBe(1);
+    });
+
+    it('refreshes expected value after paid conversion writes', async () => {
+      await service.ensureDoc('paid_score');
+      await intelligence.updateOne(
+        { channelId: 'paid_score' },
+        { $set: { expectedValue: 0.01, scoreUpdatedAt: 1 } },
+      );
+
+      await service.recordPaidConversion('paid_score', 1);
+
+      const doc = await intelligence.findOne({ channelId: 'paid_score' });
+      expect(doc!.expectedValue).toBeGreaterThan(0.01);
+      expect(doc!.scoreUpdatedAt).toBeGreaterThan(1);
+    });
+
+    it('ignores invalid paid conversion weights and clamps oversized weights', async () => {
+      await service.recordPaidConversion('paid_invalid', 0);
+      await service.recordPaidConversion('paid_invalid', Number.POSITIVE_INFINITY);
+      expect(await intelligence.findOne({ channelId: 'paid_invalid' })).toBeNull();
+
+      await service.recordPaidConversion('paid_invalid', 5);
+      const doc = await intelligence.findOne({ channelId: 'paid_invalid' });
+      expect(doc!.paidConversions).toBe(1);
+    });
+
+    it('repairs corrupted paid conversion counters before Mongo increment writes', async () => {
+      await service.ensureDoc('paid_conversion_corrupt');
+      await intelligence.updateOne(
+        { channelId: 'paid_conversion_corrupt' },
+        { $set: { paidConversions: Number.NaN } },
+      );
+
+      await service.recordPaidConversion('paid_conversion_corrupt', 0.75);
+
+      const doc = await intelligence.findOne({ channelId: 'paid_conversion_corrupt' });
+      expect(doc!.paidConversions).toBe(0.75);
     });
   });
 
@@ -386,6 +637,52 @@ describe('ChannelIntelligenceService', () => {
       const docs = await service.batchGet([]);
       expect(docs).toHaveLength(0);
     });
+
+    it('normalizes batch ids before querying', async () => {
+      await service.ensureDoc('a');
+      await service.ensureDoc('b');
+
+      const docs = await service.batchGet([' a ', 'a', '', null as unknown as string, 'b']);
+
+      expect(docs.map(doc => doc.channelId).sort()).toEqual(['a', 'b']);
+    });
+
+    it('treats malformed cursor output as empty read results', async () => {
+      const malformedService = new ChannelIntelligenceService({
+        findOne: async () => null,
+        find: () => ({ toArray: async () => null }),
+        updateOne: async () => undefined,
+        findOneAndUpdate: async () => null,
+        createIndex: async () => undefined,
+      } as any);
+
+      await expect(malformedService.batchGet(['a'])).resolves.toEqual([]);
+      await expect(malformedService.getTopChannels(10)).resolves.toEqual([]);
+    });
+
+    it('filters malformed rows from cursor output', async () => {
+      const row = createDefaultIntelligence('valid-row');
+      const malformedService = new ChannelIntelligenceService({
+        findOne: async () => null,
+        find: () => ({
+          sort: () => ({
+            limit: () => ({
+              toArray: async () => [null, { channelId: '   ' }, row],
+            }),
+          }),
+          limit: () => ({
+            toArray: async () => [null, { channelId: '   ' }, row],
+          }),
+          toArray: async () => [null, { channelId: '   ' }, row],
+        }),
+        updateOne: async () => undefined,
+        findOneAndUpdate: async () => null,
+        createIndex: async () => undefined,
+      } as any);
+
+      await expect(malformedService.batchGet(['valid-row'])).resolves.toEqual([row]);
+      await expect(malformedService.getTopChannels(10)).resolves.toEqual([row]);
+    });
   });
 
   describe('getTopChannels', () => {
@@ -406,7 +703,16 @@ describe('ChannelIntelligenceService', () => {
       const top = await service.getTopChannels(10);
       expect(top.length).toBe(2);
       // First channel should have higher expectedValue
-      expect(top[0].expectedValue).toBeGreaterThanOrEqual(top[1].expectedValue);
+      expect(top[0]!.expectedValue).toBeGreaterThanOrEqual(top[1]!.expectedValue);
+    });
+
+    it('normalizes malformed limits instead of passing them to Mongo', async () => {
+      await service.ensureDoc('limit_a');
+      await service.ensureDoc('limit_b');
+
+      const top = await service.getTopChannels(Number.NaN);
+
+      expect(top.map(doc => doc.channelId).sort()).toEqual(['limit_a', 'limit_b']);
     });
   });
 
@@ -422,6 +728,28 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.channelCategory).toBe('high_intent');
       expect(doc!.categoryConfidence).toBe(0.85);
       expect(doc!.promotionFitScore).toBe(0.9);
+    });
+
+    it('clamps malformed classification fields before writing', async () => {
+      await service.ensureDoc('ch_class_bad');
+      await service.updateClassification('ch_class_bad', {
+        category: 'bad-category' as any,
+        confidence: Number.POSITIVE_INFINITY,
+        promotionFitScore: -5,
+      });
+      const doc = await intelligence.findOne({ channelId: 'ch_class_bad' });
+      expect(doc!.channelCategory).toBe('unclassified');
+      expect(doc!.categoryConfidence).toBe(0);
+      expect(doc!.promotionFitScore).toBe(0);
+    });
+
+    it('normalizes malformed classification objects from JavaScript callers', async () => {
+      await service.ensureDoc('ch_class_null');
+      await service.updateClassification('ch_class_null', null as any);
+      const doc = await intelligence.findOne({ channelId: 'ch_class_null' });
+      expect(doc!.channelCategory).toBe('unclassified');
+      expect(doc!.categoryConfidence).toBe(0);
+      expect(doc!.promotionFitScore).toBe(0);
     });
   });
 
@@ -442,6 +770,19 @@ describe('ChannelIntelligenceService', () => {
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.saturationRate).toBe(0);
     });
+
+    it('does not write NaN saturation from malformed counters', async () => {
+      await service.ensureDoc('sat_bad');
+      await intelligence.updateOne({ channelId: 'sat_bad' }, { $set: { totalSendsToChannel: Number.NaN } });
+
+      await service.updateSaturationRate('sat_bad', Number.POSITIVE_INFINITY);
+      let doc = await intelligence.findOne({ channelId: 'sat_bad' });
+      expect(doc!.saturationRate).toBe(0);
+
+      await service.updateSaturationRate('sat_bad', 1000);
+      doc = await intelligence.findOne({ channelId: 'sat_bad' });
+      expect(doc!.saturationRate).toBe(0);
+    });
   });
 
   describe('refreshChannelMeta', () => {
@@ -458,6 +799,21 @@ describe('ChannelIntelligenceService', () => {
       await service.refreshChannelMeta('ch1', 'Test', null, 1000);
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.saturationRate).toBe(0.3);
+    });
+
+    it('uses safe counters while refreshing metadata', async () => {
+      await service.ensureDoc('meta_bad');
+      await intelligence.updateOne(
+        { channelId: 'meta_bad' },
+        { $set: {
+          totalSendsToChannel: Number.NaN,
+          'strategies.ai_contextual.n': Number.NaN,
+        }},
+      );
+      await service.refreshChannelMeta('meta_bad', 'Dating Chat', null, 1000);
+      const doc = await intelligence.findOne({ channelId: 'meta_bad' });
+      expect(doc!.saturationRate).toBe(0);
+      expect(doc!.channelCategory).toBe('high_intent');
     });
   });
 
@@ -479,6 +835,19 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.onlineTrend.ewma).toBeCloseTo(185, 0);
       expect(doc!.onlineTrend.sampleCount).toBe(2);
     });
+
+    it('sanitizes malformed online trend inputs and stored samples', async () => {
+      await service.ensureDoc('online_bad');
+      await intelligence.updateOne(
+        { channelId: 'online_bad' },
+        { $set: { 'onlineTrend.ewma': Number.NaN, 'onlineTrend.sampleCount': Number.NaN } },
+      );
+
+      await service.updateOnlineTrend('online_bad', Number.NaN);
+      const doc = await intelligence.findOne({ channelId: 'online_bad' });
+      expect(doc!.onlineTrend.ewma).toBe(0);
+      expect(doc!.onlineTrend.sampleCount).toBe(1);
+    });
   });
 
   describe('updateViewEngagement', () => {
@@ -496,6 +865,27 @@ describe('ChannelIntelligenceService', () => {
       const doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.viewEngagement.checksCount).toBe(0);
     });
+
+    it('sanitizes malformed view engagement inputs and stored counters', async () => {
+      await service.ensureDoc('views_bad');
+      await intelligence.updateOne(
+        { channelId: 'views_bad' },
+        { $set: { 'viewEngagement.ewmaRatio': Number.NaN, 'viewEngagement.checksCount': Number.NaN } },
+      );
+
+      await service.updateViewEngagement('views_bad', 500, 1000);
+      const doc = await intelligence.findOne({ channelId: 'views_bad' });
+      expect(doc!.viewEngagement.ewmaRatio).toBe(0.5);
+      expect(doc!.viewEngagement.checksCount).toBe(1);
+    });
+
+    it('records zero-view checks as low engagement samples', async () => {
+      await service.ensureDoc('views_zero');
+      await service.updateViewEngagement('views_zero', 0, 1000);
+      const doc = await intelligence.findOne({ channelId: 'views_zero' });
+      expect(doc!.viewEngagement.ewmaRatio).toBe(0);
+      expect(doc!.viewEngagement.checksCount).toBe(1);
+    });
   });
 
   describe('updateProfile', () => {
@@ -505,6 +895,31 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.topic).toBe('dating');
       expect(doc!.topicConfidence).toBe(0.9);
       expect(doc!.language).toBe('english');
+    });
+
+    it('normalizes blank profile labels and clamps confidences', async () => {
+      await service.updateProfile('profile_bad', '   ', 5, '', Number.NaN);
+      const doc = await intelligence.findOne({ channelId: 'profile_bad' });
+      expect(doc!.topic).toBe('general_chat');
+      expect(doc!.topicConfidence).toBe(1);
+      expect(doc!.language).toBe('unknown');
+      expect(doc!.languageConfidence).toBe(0);
+    });
+
+    it('normalizes malformed profile labels from JavaScript callers', async () => {
+      await service.updateProfile('profile_malformed', null as unknown as string, 0.4, 123 as unknown as string, 0.6);
+      const doc = await intelligence.findOne({ channelId: 'profile_malformed' });
+      expect(doc!.topic).toBe('general_chat');
+      expect(doc!.topicConfidence).toBe(0.4);
+      expect(doc!.language).toBe('unknown');
+      expect(doc!.languageConfidence).toBe(0.6);
+    });
+
+    it('uses normalized channel ids for direct profile writes', async () => {
+      await service.updateProfile('  profile_trimmed  ', 'dating', 0.9, 'english', 0.9);
+
+      expect(await intelligence.findOne({ channelId: 'profile_trimmed' })).toBeTruthy();
+      expect(await intelligence.findOne({ channelId: '  profile_trimmed  ' })).toBeNull();
     });
   });
 
@@ -528,8 +943,6 @@ describe('ChannelIntelligenceService', () => {
       // Record 3 successes — discount should apply before 3rd record
       await service.recordSuccess('ch1', 'ai_contextual', false);
       await service.recordSuccess('ch1', 'ai_contextual', false);
-      const before = await intelligence.findOne({ channelId: 'ch1' });
-      const sBefore = before!.strategies.ai_contextual.s;
 
       await service.recordSuccess('ch1', 'ai_contextual', false);
       const after = await intelligence.findOne({ channelId: 'ch1' });
@@ -538,6 +951,17 @@ describe('ChannelIntelligenceService', () => {
       // but n should be 3
       expect(after!.strategies.ai_contextual.n).toBe(3);
       expect(after!.strategies.ai_contextual.s).toBeLessThan(3); // because of discount
+    });
+
+    it('applies discount before direct send-failure outcomes', async () => {
+      await service.recordFailure('failure_discount', 'legacy', 'TRANSIENT');
+      await service.recordFailure('failure_discount', 'legacy', 'TRANSIENT');
+
+      await service.recordFailure('failure_discount', 'legacy', 'TRANSIENT');
+      const after = await intelligence.findOne({ channelId: 'failure_discount' });
+
+      expect(after!.strategies.legacy.n).toBe(3);
+      expect(after!.strategies.legacy.f).toBeLessThan(3);
     });
   });
 
@@ -555,8 +979,8 @@ describe('ChannelIntelligenceService', () => {
       await service.ensureDoc('proj2');
       const docs = await service.batchGet(['proj1', 'proj2'], { channelId: 1, stage: 1 });
       expect(docs).toHaveLength(2);
-      expect(docs[0].channelId).toBeDefined();
-      expect(docs[0].stage).toBeDefined();
+      expect(docs[0]!.channelId).toBeDefined();
+      expect(docs[0]!.stage).toBeDefined();
     });
   });
 
@@ -568,6 +992,14 @@ describe('ChannelIntelligenceService', () => {
       // 5 min cooldown
       expect(doc!.cooldownUntil).toBeGreaterThan(before);
       expect(doc!.cooldownUntil).toBeLessThan(before + 10 * 60_000);
+    });
+
+    it('honors explicit Telegram wait seconds when larger than the default flood cooldown', async () => {
+      const before = Date.now();
+      await service.recordFailure('ch_fw_long', 'legacy', 'FLOOD_WAIT_3600');
+      const doc = await intelligence.findOne({ channelId: 'ch_fw_long' });
+
+      expect(doc!.cooldownUntil).toBeGreaterThanOrEqual(before + 60 * 60_000);
     });
 
     it('sets cooldown for SLOWMODE_WAIT', async () => {
@@ -623,11 +1055,12 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.viewEngagement.checksCount).toBe(2);
     });
 
-    it('skips when views <= 0', async () => {
+    it('records zero views as a valid engagement check', async () => {
       await service.ensureDoc('ve2');
       await service.updateViewEngagement('ve2', 0, 1000);
       const doc = await intelligence.findOne({ channelId: 've2' });
-      expect(doc!.viewEngagement.checksCount).toBe(0);
+      expect(doc!.viewEngagement.ewmaRatio).toBe(0);
+      expect(doc!.viewEngagement.checksCount).toBe(1);
     });
   });
 
@@ -640,6 +1073,27 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.followupTotal).toBe(3);
       expect(doc!.followupSuccessCount).toBe(2);
       expect(doc!.followupSuccessRate).toBeCloseTo(2 / 3, 2);
+    });
+
+    it('scores follow-up outcomes with the newly computed follow-up rate in the same write', async () => {
+      await service.ensureDoc('fu_score_fresh');
+      await intelligence.updateOne(
+        { channelId: 'fu_score_fresh' },
+        { $set: {
+          followupTotal: 4,
+          followupSuccessCount: 4,
+          followupSuccessRate: 0.1,
+          'strategies.legacy.s': 1,
+          'strategies.legacy.f': 9,
+          'strategies.legacy.n': 10,
+        }},
+      );
+
+      await service.recordSuccess('fu_score_fresh', 'legacy', true);
+
+      const doc = await intelligence.findOne({ channelId: 'fu_score_fresh' });
+      expect(doc!.followupSuccessRate).toBe(1);
+      expect(doc!.expectedValue).toBeGreaterThan(0.55);
     });
   });
 });

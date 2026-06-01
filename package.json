@@ -2,40 +2,31 @@
   "name": "tg-promo-helper",
   "version": "1.0.0",
   "description": "Shared promotion intelligence — channel scoring, percentile engine, Thompson Sampling, Redis locks, conversion attribution",
+  "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js"
-    },
-    "./channel-intelligence": {
-      "types": "./dist/channel-intelligence/index.d.ts",
-      "require": "./dist/channel-intelligence/index.js"
-    },
-    "./message-strategy": {
-      "types": "./dist/message-strategy/index.d.ts",
-      "require": "./dist/message-strategy/index.js"
-    },
-    "./scoring": {
-      "types": "./dist/scoring/index.d.ts",
-      "require": "./dist/scoring/index.js"
-    },
-    "./redis": {
-      "types": "./dist/redis/index.d.ts",
-      "require": "./dist/redis/index.js"
-    },
-    "./attribution": {
-      "types": "./dist/attribution/index.d.ts",
-      "require": "./dist/attribution/index.js"
     }
   },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit --pretty false",
+    "typecheck:declarations": "tsc --noEmit --pretty false --isolatedDeclarations true",
+    "typecheck:tests": "tsc --noEmit --pretty false --target ES2020 --module CommonJS --moduleResolution node --esModuleInterop --skipLibCheck --resolveJsonModule --strict true --exactOptionalPropertyTypes true --noUncheckedIndexedAccess true --noPropertyAccessFromIndexSignature true --noImplicitReturns true --noFallthroughCasesInSwitch true --types jest tests/*.ts",
     "test": "jest",
+    "test:ci": "jest --runInBand",
     "test:coverage": "jest --coverage",
-    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "audit:promotion-db": "node scripts/analyze-promotion-collections.js",
+    "audit:active-channels": "node scripts/audit-active-channels-cleanup.js",
+    "backfill:channel-intelligence": "node scripts/backfill-channel-intelligence.js",
+    "repair:channel-intelligence-schema": "node scripts/repair-channel-intelligence-schema.js",
+    "verify:channel-intelligence": "node scripts/verify-channel-intelligence.js",
+    "prepublishOnly": "npm run clean && npm run typecheck && npm run typecheck:declarations && npm run build && npm run test:ci",
     "prepare": "node -e \"if (process.env.CI) { process.exit(0); } const fs = require('fs'); const path = require('path'); const huskyPath = path.join(process.cwd(), 'node_modules', '.bin', 'husky'); if (fs.existsSync(huskyPath)) { require('child_process').execSync('husky', { stdio: 'ignore' }); }\""
   },
   "keywords": [
@@ -49,6 +40,9 @@
   ],
   "author": "SaiKumar Shetty",
   "license": "ISC",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

@@ -2,7 +2,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { MongoClient, Collection, Db } from 'mongodb';
 import Redis from 'ioredis-mock';
 import type { Redis as RedisType } from 'ioredis';
-import type { ChannelIntelligenceDocument } from '../src/channel-intelligence/channel-intelligence.types';
+import type { ChannelIntelligenceDocument } from '../src';
 
 let mongod: MongoMemoryServer;
 let client: MongoClient;
@@ -14,7 +14,11 @@ export async function setupMongo(): Promise<{
   activeChannels: Collection;
   intelligence: Collection<ChannelIntelligenceDocument>;
 }> {
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryServer.create({
+    instance: {
+      ip: '127.0.0.1',
+    },
+  });
   const uri = mongod.getUri();
   client = new MongoClient(uri);
   await client.connect();

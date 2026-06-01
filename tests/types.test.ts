@@ -1,8 +1,8 @@
 import {
   createDefaultStrategies,
   createDefaultIntelligence,
-} from '../src/channel-intelligence/channel-intelligence.types';
-import type { MessageStrategy } from '../src/channel-intelligence/channel-intelligence.types';
+} from '../src';
+import type { MessageStrategy } from '../src';
 
 const ALL_STRATEGIES: MessageStrategy[] = [
   'ai_contextual', 'markov_chain', 'natural_template',
