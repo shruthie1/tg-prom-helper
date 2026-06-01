@@ -29,6 +29,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Sync Latest Branch
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --tags origin "${{ github.ref_name }}"
+          git checkout -B "${{ github.ref_name }}" "origin/${{ github.ref_name }}"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -150,16 +157,6 @@ jobs:
           echo "version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "publish=${SHOULD_PUBLISH}" >> "$GITHUB_OUTPUT"
 
-          if [ "$NEXT_VERSION" != "$CURRENT_VERSION" ]; then
-            npm version "$NEXT_VERSION" --no-git-tag-version
-          fi
-
-          if ! git diff --quiet -- package.json package-lock.json; then
-            git add package.json package-lock.json
-            git commit -m "Bump version to ${NEXT_VERSION} [skip ci]"
-            git push origin HEAD:${{ github.ref_name }}
-          fi
-
       - name: Configure NPM Authentication
         if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
         run: |
@@ -171,6 +168,23 @@ jobs:
         run: npm whoami
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Apply Version Bump
+        if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION="$(node -p "require('./package.json').version")"
+          NEXT_VERSION="${{ steps.publish_version.outputs.version }}"
+
+          if [ "$NEXT_VERSION" != "$CURRENT_VERSION" ]; then
+            npm version "$NEXT_VERSION" --no-git-tag-version
+          fi
+
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git add package.json package-lock.json
+            git commit -m "Bump version to ${NEXT_VERSION} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
 
       - name: Publish to NPM
         if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
