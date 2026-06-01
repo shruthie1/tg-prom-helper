@@ -1,0 +1,76 @@
+name: Validate and Publish NPM Package
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tg-promo-helper-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    name: Validate and Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org/"
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Validate Package
+        run: npm run prepublishOnly
+
+      - name: Verify Package Contents
+        run: npm pack --dry-run
+
+      - name: Configure Git
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Bump Version
+        if: github.event_name != 'pull_request'
+        run: |
+          npm version patch -m "Bump version to %s [skip ci]"
+          git push origin HEAD:${{ github.ref_name }} --follow-tags
+
+      - name: Configure NPM Authentication
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          chmod 0600 ~/.npmrc
+
+      - name: Verify NPM Authentication
+        if: github.event_name != 'pull_request'
+        run: npm whoami
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to NPM
+        if: github.event_name != 'pull_request'
+        run: npm publish --access public
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
