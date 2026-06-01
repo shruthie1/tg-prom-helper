@@ -159,7 +159,7 @@ The repeated audit loop is supervised by `docs/channel-message-promotions-audit-
 - Telegram send result contains `sent=true` with `messageId` missing, `NaN`, non-integer, or non-positive.
 - Redis caller passes blank or whitespace identifiers.
 - Profile/classification/saturation/online/view updates receive malformed numerical inputs.
-- Package consumer importing only from `tg-promo-helper`.
+- Package consumer importing only from `promo-helper`.
 - Redis percentile cache contains valid JSON with missing, unordered, or non-numeric buckets.
 - Runtime account is created with whitespace-padded identifiers or blank channel IDs.
 - Serialized bandit state contains negative, `NaN`, or unknown-arm counters.

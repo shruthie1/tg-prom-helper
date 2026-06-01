@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: tg-promo-helper-publish-${{ github.ref }}
+  group: promo-helper-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -51,26 +51,163 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Bump Version
+      - name: Resolve Publish Version
+        id: publish_version
         if: github.event_name != 'pull_request'
         run: |
-          npm version patch -m "Bump version to %s [skip ci]"
-          git push origin HEAD:${{ github.ref_name }} --follow-tags
+          set -euo pipefail
+          git fetch --tags origin "${{ github.ref_name }}"
+
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          CURRENT_VERSION="$(node -p "require('./package.json').version")"
+          CURRENT_GIT_HEAD="$(git rev-parse HEAD)"
+          REMOTE_GIT_HEAD="$(git rev-parse "origin/${{ github.ref_name }}")"
+          if [ "$CURRENT_GIT_HEAD" != "$REMOTE_GIT_HEAD" ]; then
+            echo "Branch moved after checkout; refusing to publish unvalidated remote changes."
+            echo "HEAD=${CURRENT_GIT_HEAD}"
+            echo "origin/${{ github.ref_name }}=${REMOTE_GIT_HEAD}"
+            exit 1
+          fi
+
+          CURRENT_TAG_AT_HEAD="false"
+          if git rev-parse -q --verify "refs/tags/v${CURRENT_VERSION}" >/dev/null; then
+            CURRENT_TAG_COMMIT="$(git rev-list -n 1 "v${CURRENT_VERSION}")"
+            if [ "$CURRENT_TAG_COMMIT" = "$CURRENT_GIT_HEAD" ]; then
+              CURRENT_TAG_AT_HEAD="true"
+            fi
+          fi
+
+          REGISTRY_VERSIONS="$(npm view "$PACKAGE_NAME" versions --json 2>/dev/null || echo "[]")"
+          CURRENT_REGISTRY_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${CURRENT_VERSION}" gitHead 2>/dev/null || true)"
+          GIT_VERSIONS="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | tr '\n' ' ')"
+
+          RESOLUTION="$(node - "$CURRENT_VERSION" "$CURRENT_GIT_HEAD" "$CURRENT_REGISTRY_GIT_HEAD" "$CURRENT_TAG_AT_HEAD" "$REGISTRY_VERSIONS" "$GIT_VERSIONS" <<'NODE'
+          const [current, currentGitHead, registryGitHead, currentTagAtHead, registryJson, gitVersionsText] = process.argv.slice(2);
+          const parse = (version) => {
+            const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version || '').trim());
+            return match ? match.slice(1).map(Number) : null;
+          };
+          const format = ([major, minor, patch]) => `${major}.${minor}.${patch}`;
+          const bumpPatch = ([major, minor, patch]) => [major, minor, patch + 1];
+
+          let candidate = parse(current);
+          if (!candidate) {
+            throw new Error(`Invalid package version: ${current}`);
+          }
+
+          let registryVersions = [];
+          try {
+            const parsed = JSON.parse(registryJson || '[]');
+            registryVersions = Array.isArray(parsed) ? parsed : [parsed];
+          } catch {
+            registryVersions = [];
+          }
+
+          const published = new Set(registryVersions.filter((version) => parse(version)));
+          const tagged = new Set(String(gitVersionsText || '').split(/\s+/).filter((version) => parse(version)));
+          const currentIsPublished = published.has(current);
+          const currentPublishedFromThisCommit =
+            currentIsPublished &&
+            registryGitHead &&
+            registryGitHead.trim() === currentGitHead.trim();
+
+          if (currentPublishedFromThisCommit) {
+            process.stdout.write(JSON.stringify({
+              version: current,
+              publish: false,
+              reason: 'current version is already published from this commit',
+            }));
+            process.exit(0);
+          }
+
+          while (
+            published.has(format(candidate)) ||
+            (
+              tagged.has(format(candidate)) &&
+              !(format(candidate) === current && currentTagAtHead === 'true')
+            )
+          ) {
+            candidate = bumpPatch(candidate);
+          }
+
+          process.stdout.write(JSON.stringify({
+            version: format(candidate),
+            publish: true,
+            reason: currentIsPublished
+              ? 'current version is already published from a different commit'
+              : 'current version is not published',
+          }));
+          NODE
+          )"
+
+          NEXT_VERSION="$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.version)" "$RESOLUTION")"
+          SHOULD_PUBLISH="$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(String(data.publish))" "$RESOLUTION")"
+          REASON="$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.reason)" "$RESOLUTION")"
+
+          echo "Selected publish version: ${NEXT_VERSION}"
+          echo "Publish required: ${SHOULD_PUBLISH}"
+          echo "Reason: ${REASON}"
+          echo "version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publish=${SHOULD_PUBLISH}" >> "$GITHUB_OUTPUT"
+
+          if [ "$NEXT_VERSION" != "$CURRENT_VERSION" ]; then
+            npm version "$NEXT_VERSION" --no-git-tag-version
+          fi
+
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git add package.json package-lock.json
+            git commit -m "Bump version to ${NEXT_VERSION} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
 
       - name: Configure NPM Authentication
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
         run: |
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
           chmod 0600 ~/.npmrc
 
       - name: Verify NPM Authentication
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
         run: npm whoami
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to NPM
-        if: github.event_name != 'pull_request'
-        run: npm publish --access public
+        if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          VERSION="${{ steps.publish_version.outputs.version }}"
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+            CURRENT_GIT_HEAD="$(git rev-parse HEAD)"
+            if [ "$PUBLISHED_GIT_HEAD" = "$CURRENT_GIT_HEAD" ]; then
+              echo "${PACKAGE_NAME}@${VERSION} is already published from this commit; skipping publish."
+              exit 0
+            fi
+            echo "${PACKAGE_NAME}@${VERSION} is already published from ${PUBLISHED_GIT_HEAD}, but HEAD is ${CURRENT_GIT_HEAD}."
+            exit 1
+          fi
+          npm publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create Version Tag
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.publish_version.outputs.version }}"
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            TAG_COMMIT="$(git rev-list -n 1 "v${VERSION}")"
+            HEAD_COMMIT="$(git rev-parse HEAD)"
+            if [ "$TAG_COMMIT" = "$HEAD_COMMIT" ]; then
+              echo "Tag v${VERSION} already exists at this commit; not recreating it."
+            else
+              echo "Tag v${VERSION} already exists at ${TAG_COMMIT}, but HEAD is ${HEAD_COMMIT}."
+              exit 1
+            fi
+          else
+            git tag -a "v${VERSION}" -m "Bump version to ${VERSION} [skip ci]"
+            git push origin "v${VERSION}"
+          fi

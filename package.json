@@ -1,5 +1,5 @@
 {
-  "name": "tg-promo-helper",
+  "name": "promo-helper",
   "version": "1.0.2",
   "description": "Shared promotion intelligence — channel scoring, percentile engine, Thompson Sampling, Redis locks, conversion attribution",
   "type": "commonjs",
@@ -38,7 +38,7 @@
     "scoring",
     "attribution"
   ],
-  "author": "SSK",
+  "author": "SaiKumar Shetty",
   "license": "ISC",
   "publishConfig": {
     "access": "public"

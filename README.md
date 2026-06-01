@@ -1,10 +1,10 @@
-# tg-promo-helper
+# promo-helper
 
 Shared Telegram promotion intelligence package used by `tg-aut-local`, `promote-clients-local`, and API/provider services.
 
 ## Package Shape
 
-- `tg-promo-helper`: the only public package entry. Consumers import promotion APIs and shared types from this root.
+- `promo-helper`: the only public package entry. Consumers import promotion APIs and shared types from this root.
 - `src/channel-message-promotions`: current internal channel message promotion family.
 - `src/types`: internal shared structural types for Mongo/Redis adapters and percentile snapshots, re-exported from the root.
 
@@ -14,7 +14,7 @@ Shared Telegram promotion intelligence package used by `tg-aut-local`, `promote-
 npm run clean
 npm run build
 npm test -- --runInBand
-npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run
+npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run
 ```
 
 ## Runtime Model
@@ -28,4 +28,3 @@ Apps own Telegram clients, message materialization, Mongo/Redis instances, and p
 Use `PromotionRunnerSupervisor` around each account runner when the host app needs 24/7 behavior. The supervisor recreates runners after exit, applies restart backoff, can pause through `shouldRun()`, and can stop a runner that has no recent activity through `stuckAfterMs`.
 
 Telegram reconnect/session repair still belongs in the host app because the host owns the Telegram client. Wire that into `shouldRun()`, `createRunner()`, and the supervisor hooks.
-# tg-prom-helper

@@ -93,7 +93,7 @@ For a final clean monitor verdict, run:
 - `npm run typecheck:declarations`
 - `npm run test:ci`
 - `npm run prepublishOnly`
-- `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run`
+- `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run`
 - `find src -type d -empty`
 
 When `mongodb-memory-server` cannot bind inside the sandbox, rerun `npm run test:ci` with the approved escalated command.
@@ -149,7 +149,7 @@ Iteration 5:
 - Failure modes: clean - full CI and prepublish suites passed Mongo, Redis, attribution, runtime, runner, queue, policy, scoring, selection, classifier, percentile, and bandit coverage.
 - Algorithms: clean - full suites passed after all learning and percentile changes.
 - Fixes: none.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm run test:ci` passed with 13 suites and 406 tests, `npm run prepublishOnly` passed with 13 suites and 406 tests, and post-build `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` produced 158 files, 76.3 kB packed, 396.0 kB unpacked.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm run test:ci` passed with 13 suites and 406 tests, `npm run prepublishOnly` passed with 13 suites and 406 tests, and post-build `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` produced 158 files, 76.3 kB packed, 396.0 kB unpacked.
 - Monitor verdict: clean; this run reached clean validation after the fifth pass, with no new gaps found after the final source change.
 
 Run: 2026-05-31 repeated five-iteration functionality/logic audit with queue field hygiene, strategy-key normalization, percentile numeric coercion, and Redis timestamp guards.
@@ -201,7 +201,7 @@ Iteration 5:
 - Failure modes: clean - full CI and prepublish suites passed Mongo, Redis, attribution, runtime, runner, queue, policy, scoring, selection, classifier, percentile, and bandit coverage.
 - Algorithms: clean - full suites passed after all boundary and coercion changes.
 - Fixes: none.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm test -- --runInBand tests/promotion-flow-runner.test.ts tests/thompson-sampling.test.ts tests/redis-modules.test.ts tests/percentile-engine.test.ts` passed with 169 tests, `npm run test:ci` passed with 13 suites and 404 tests, `npm run prepublishOnly` passed with 13 suites and 404 tests, and post-build `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` produced 158 files, 76.0 kB packed, 394.8 kB unpacked.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm test -- --runInBand tests/promotion-flow-runner.test.ts tests/thompson-sampling.test.ts tests/redis-modules.test.ts tests/percentile-engine.test.ts` passed with 169 tests, `npm run test:ci` passed with 13 suites and 404 tests, `npm run prepublishOnly` passed with 13 suites and 404 tests, and post-build `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` produced 158 files, 76.0 kB packed, 394.8 kB unpacked.
 - Monitor verdict: clean; this run reached clean validation after the fifth pass, with no new gaps found after the final source change.
 
 Run: 2026-05-31 repeated five-iteration functionality/logic audit with public API normalization and feature-specific Redis contracts.
@@ -253,7 +253,7 @@ Iteration 5:
 - Failure modes: clean - full CI and prepublish suites passed Mongo, Redis, attribution, runtime, runner, queue, policy, scoring, selection, classifier, percentile, and bandit coverage.
 - Algorithms: clean - full suites passed after normalization and runtime contract changes.
 - Fixes: none.
-- Validation: `find src -type d -empty`, debug/TODO scan, `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 399 tests. Package dry-run produced 158 files, 75.7 kB packed, 393.9 kB unpacked.
+- Validation: `find src -type d -empty`, debug/TODO scan, `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 399 tests. Package dry-run produced 158 files, 75.7 kB packed, 393.9 kB unpacked.
 - Monitor verdict: clean; repeated full-suite coverage through both `test:ci` and `prepublishOnly` provided a clean convergence confirmation after the last source change.
 
 Run: 2026-05-31 repeated five-iteration functionality/logic audit with runner boundary and strategy-normalization fixes.
@@ -305,7 +305,7 @@ Iteration 5:
 - Failure modes: clean - full CI and prepublish suites passed Mongo, Redis, attribution, runner, queue, runtime, policy, scoring, selection, classifier, percentile, and bandit coverage.
 - Algorithms: clean - full suites passed after the normalization changes.
 - Fixes: none.
-- Validation: `find src -type d -empty`, debug/TODO scan, `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 398 tests. Package dry-run produced 158 files, 75.4 kB packed, 391.3 kB unpacked.
+- Validation: `find src -type d -empty`, debug/TODO scan, `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 398 tests. Package dry-run produced 158 files, 75.4 kB packed, 391.3 kB unpacked.
 - Monitor verdict: clean; repeated full-suite coverage through both `test:ci` and `prepublishOnly` provided a clean convergence confirmation after the last source change.
 
 Run: 2026-05-31 repeated five-iteration functionality/logic audit with queued-strategy, scoring timestamp, and Mongo outcome-counter fixes.
@@ -357,7 +357,7 @@ Iteration 5:
 - Failure modes: clean - full suite passed Mongo, Redis, runner, attribution, queue, policy, and runtime regressions.
 - Algorithms: clean - full suite passed scoring, selection, percentile, classifier, and bandit regressions.
 - Fixes: none.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 395 tests.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 395 tests.
 - Monitor verdict: clean.
 
 Convergence confirmation:
@@ -367,7 +367,7 @@ Convergence confirmation:
 - Failure modes: clean - `npm run prepublishOnly` passed again with 13 suites and 395 tests.
 - Algorithms: clean - full suite passed again with 13 suites and 395 tests.
 - Fixes: no behavioral fixes; queue strategy normalization was cleaned up to avoid duplicate normalization calls, then validation was rerun.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm test -- promotion-flow-runner.test.ts --runInBand`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed; package dry-run produced 158 files, 74.8 kB packed, 387.0 kB unpacked.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm test -- promotion-flow-runner.test.ts --runInBand`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed; package dry-run produced 158 files, 74.8 kB packed, 387.0 kB unpacked.
 - Monitor verdict: clean; stop rule satisfied after two consecutive clean passes.
 
 Run: 2026-05-31 repeated five-iteration functionality/logic audit with hidden-gap fixes.
@@ -419,7 +419,7 @@ Iteration 5:
 - Failure modes: clean - full suite passed Mongo, Redis, runner, attribution, queue, and policy regressions.
 - Algorithms: clean - full suite passed scoring, selection, percentile, classifier, and bandit regressions.
 - Fixes: none.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 391 tests.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, escalated `npm run test:ci`, escalated `npm run prepublishOnly`, `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 391 tests.
 - Monitor verdict: clean.
 
 Convergence confirmation:
@@ -429,7 +429,7 @@ Convergence confirmation:
 - Failure modes: clean - `npm run prepublishOnly` passed again.
 - Algorithms: clean - full suite passed again with 13 suites and 391 tests.
 - Fixes: none.
-- Validation: escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed.
+- Validation: escalated `npm run test:ci`, escalated `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed.
 - Monitor verdict: clean; stop rule satisfied after two consecutive clean passes.
 
 Run: 2026-05-31 five-iteration functionality/hidden-issue audit plus convergence confirmation.
@@ -481,7 +481,7 @@ Iteration 5:
 - Failure modes: clean - full suite passed all Mongo, Redis, runner, attribution, queue, and policy regressions.
 - Algorithms: clean - full suite passed scoring, selection, percentile, classifier, and bandit regressions.
 - Fixes: none.
-- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm run test:ci`, `npm run prepublishOnly`, `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 387 tests.
+- Validation: `npm run typecheck`, `npm run typecheck:tests`, `npm run typecheck:declarations`, `npm run test:ci`, `npm run prepublishOnly`, `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed. Full suite result: 13 suites, 387 tests.
 - Monitor verdict: clean.
 
 Convergence confirmation:
@@ -491,7 +491,7 @@ Convergence confirmation:
 - Failure modes: clean - `npm run prepublishOnly` passed again.
 - Algorithms: clean - full suite passed again with 13 suites and 387 tests.
 - Fixes: none.
-- Validation: `npm run test:ci`, `npm run prepublishOnly`, and `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run` passed.
+- Validation: `npm run test:ci`, `npm run prepublishOnly`, and `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run` passed.
 - Monitor verdict: clean; stop rule satisfied after two consecutive clean passes.
 
 Run: 2026-05-31 deeper functionality/hidden-gap audit.
@@ -543,7 +543,7 @@ Iteration 5:
 - Failure modes: clean - full CI passed.
 - Algorithms: clean - no additional scoring, policy, strategy, or attribution drift found.
 - Fixes: none.
-- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run`.
+- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run`.
 - Monitor verdict: clean.
 
 Convergence confirmation:
@@ -553,7 +553,7 @@ Convergence confirmation:
 - Failure modes: clean - full CI and prepublish passed again.
 - Algorithms: clean - no new drift found.
 - Fixes: none.
-- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run`.
+- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run`.
 - Monitor verdict: clean. Two consecutive clean passes reached after the iteration 2-4 fixes.
 
 Iteration 1:
@@ -603,7 +603,7 @@ Iteration 5:
 - Failure modes: clean - full CI passed.
 - Algorithms: clean - no new scoring, selection, policy, or attribution drift found.
 - Fixes: none.
-- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run`; `find src -type d -empty`.
+- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run`; `find src -type d -empty`.
 - Monitor verdict: clean.
 
 Convergence confirmation:
@@ -613,5 +613,5 @@ Convergence confirmation:
 - Failure modes: clean - full CI and prepublish passed again.
 - Algorithms: clean - no new logic drift found.
 - Fixes: none.
-- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/tg-promo-helper-npm-cache pack --dry-run`.
+- Validation: `npm run typecheck`; `npm run typecheck:tests`; `npm run typecheck:declarations`; `npm run test:ci`; `npm run prepublishOnly`; `npm --cache /private/tmp/promo-helper-npm-cache pack --dry-run`.
 - Monitor verdict: clean. Two consecutive clean passes reached after the iteration 4 fix.
