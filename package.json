@@ -1,6 +1,6 @@
 {
   "name": "tg-promo-helper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shared promotion intelligence — channel scoring, percentile engine, Thompson Sampling, Redis locks, conversion attribution",
   "type": "commonjs",
   "main": "dist/index.js",
