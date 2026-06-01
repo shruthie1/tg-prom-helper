@@ -160,14 +160,30 @@ jobs:
       - name: Configure NPM Authentication
         if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-          chmod 0600 ~/.npmrc
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is missing or empty."
+            exit 1
+          fi
+
+          NPMRC="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          mkdir -p "$(dirname "$NPMRC")"
+          {
+            echo "registry=https://registry.npmjs.org/"
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+            echo "always-auth=true"
+          } > "$NPMRC"
+          chmod 0600 "$NPMRC"
+          echo "Configured npm auth at ${NPMRC}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify NPM Authentication
         if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
         run: npm whoami
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Apply Version Bump
         if: github.event_name != 'pull_request' && steps.publish_version.outputs.publish == 'true'
@@ -205,6 +221,7 @@ jobs:
           npm publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create Version Tag
         if: github.event_name != 'pull_request'
