@@ -8,7 +8,7 @@
 import type { RedisLike } from '../../types';
 import { normalizeChannelId } from '../utils/channel-id';
 
-const LOCK_TTL = 300; // 5 minutes
+const LOCK_TTL = 120; // 2 minutes
 
 export class RedisChannelLock {
   private static instance: RedisChannelLock | undefined;

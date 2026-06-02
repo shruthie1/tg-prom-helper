@@ -68,6 +68,15 @@ describe('RedisChannelLock', () => {
       expect(await lock.isRecentlyPromoted('ch1')).toBe(true);
     });
 
+    it('uses a two minute promotion lock ttl', async () => {
+      await lock.markPromoted('ch1', '+919999');
+
+      const ttl = await redis.ttl('promote:lock:ch1');
+
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(120);
+    });
+
     it('accepts string and boolean Redis exists results from compatible clients', async () => {
       const stringExistsLock = new RedisChannelLock({
         get: async () => null,

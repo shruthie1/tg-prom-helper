@@ -1393,6 +1393,69 @@ describe('PromotionFlowRunner', () => {
     }
   });
 
+  it('does not block scheduled follow-ups on the cross-account promotion lock', async () => {
+    jest.useFakeTimers();
+    const collection = new CollectionMock<ChannelIntelligenceDocument>();
+    collection.docs.set('locked-followup-channel', createDefaultIntelligence('locked-followup-channel'));
+    const account = await createAccount(collection);
+    (account as any).isRecentlyPromoted = jest.fn().mockResolvedValue(true);
+    const channel: TestChannel = {
+      channelId: 'locked-followup-channel',
+      participantsCount: 1000,
+      canSendMsgs: true,
+      availableMsgs: ['0'],
+    };
+    const queue = new PromotionMessageQueue();
+    queue.enqueue({
+      channelId: 'locked-followup-channel',
+      messageId: 904,
+      timestamp: Date.now(),
+      messageIndex: '0',
+      isFollowUp: false,
+    });
+    const sent: Array<{ kind: string; isFollowUp: boolean }> = [];
+
+    const adapter: PromotionFlowAdapter<TestChannel> = {
+      isActive: () => true,
+      getStats: () => ({ successCount: 0, failedCount: 0, failStreak: 0, daysLeft: 1 }),
+      loadChannels: async () => [],
+      getChannel: async () => channel,
+      getIntelligenceDocs: async () => [collection.docs.get('locked-followup-channel')!],
+      getIntelligenceDoc: async () => collection.docs.get('locked-followup-channel')!,
+      sendPromotion: async ({ candidate, isFollowUp }) => {
+        sent.push({ kind: candidate.kind, isFollowUp });
+        return { sent: true, messageId: 905, messageIndex: candidate.randomIndex };
+      },
+      checkMessage: async () => ({ status: 'exists' }),
+      sleep: async () => {},
+    };
+
+    const runner = new PromotionFlowRunner(adapter, {
+      account,
+      scoringEnabled: false,
+      messageBanditEnabled: false,
+      redisLockEnabled: true,
+      attributionEnabled: false,
+      batchTarget: 1,
+      messageCheckDelayMs: 0,
+      followUpDelayMs: 0,
+      followUpJitterMs: 0,
+      channelLoopDelayMs: 0,
+      messageQueue: queue,
+    });
+
+    try {
+      await runner.checkQueuedMessages();
+      await jest.runOnlyPendingTimersAsync();
+
+      expect(sent).toEqual([{ kind: 'followUp', isFollowUp: true }]);
+      expect((account as any).isRecentlyPromoted).not.toHaveBeenCalled();
+    } finally {
+      runner.stop();
+      jest.useRealTimers();
+    }
+  });
+
   it('treats pending follow-up timers as in-flight promotion work for channel eligibility', async () => {
     jest.useFakeTimers();
     const collection = new CollectionMock<ChannelIntelligenceDocument>();
