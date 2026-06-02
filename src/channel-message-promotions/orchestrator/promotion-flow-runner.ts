@@ -369,8 +369,9 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
           break;
         }
         if (result.status === 'exists') {
+          const existingMessage = withMessageCheckText(message, result);
           this.log('debug', `Promotion message exists; channelId=${message.channelId} messageId=${message.messageId} isFollowUp=${message.isFollowUp}`);
-          await this.callHook('onMessageExisting', () => this.adapter.onMessageExisting?.(message));
+          await this.callHook('onMessageExisting', () => this.adapter.onMessageExisting?.(existingMessage));
           await this.scheduleFollowUp(message);
           completed.add(entry);
         } else if (result.status === 'deleted') {
@@ -1036,14 +1037,30 @@ function normalizeStats(value: unknown): PromotionFlowStats {
   };
 }
 
-function normalizeMessageCheckResult(value: unknown): { status: 'exists' | 'deleted' | 'unknown' } {
-  return isRecord(value) && (
+function normalizeMessageCheckResult(value: unknown): PromotionMessageCheckResult {
+  if (!isRecord(value) || !(
     value['status'] === 'exists'
     || value['status'] === 'deleted'
     || value['status'] === 'unknown'
-  )
-    ? { status: value['status'] }
-    : { status: 'unknown' };
+  )) {
+    return { status: 'unknown' };
+  }
+  const messageText = normalizeMessageText(value['messageText']);
+  return {
+    status: value['status'],
+    ...(messageText !== undefined ? { messageText } : {}),
+  };
+}
+
+function withMessageCheckText(message: PromotionQueuedMessage, result: PromotionMessageCheckResult): PromotionQueuedMessage {
+  const messageText = normalizeMessageText(result.messageText);
+  return messageText !== undefined ? { ...message, messageText } : message;
+}
+
+function normalizeMessageText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeSendResult(value: unknown, candidate: PromotionMessageCandidate): PromotionSendResult {

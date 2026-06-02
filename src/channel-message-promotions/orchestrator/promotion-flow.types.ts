@@ -13,6 +13,7 @@ export interface PromotionQueuedMessage {
   strategy?: MessageStrategy;
   isFollowUp: boolean;
   availableMessageCount?: number;
+  messageText?: string;
 }
 
 export interface PromotionFlowStats {
@@ -38,6 +39,7 @@ export interface PromotionSendResult {
 
 export interface PromotionMessageCheckResult {
   status: 'exists' | 'deleted' | 'unknown';
+  messageText?: string;
 }
 
 export type PromotionRunnerStatus = 'idle' | 'running' | 'stopping' | 'stopped';

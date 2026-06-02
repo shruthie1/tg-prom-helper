@@ -247,6 +247,55 @@ describe('PromotionFlowRunner', () => {
     runner.stop();
   });
 
+  it('passes existing message text from check result into onMessageExisting without storing it in the queue', async () => {
+    const collection = new CollectionMock<ChannelIntelligenceDocument>();
+    collection.docs.set('ch1', createDefaultIntelligence('ch1'));
+    const account = await createAccount(collection);
+    const channel: TestChannel = {
+      channelId: 'ch1',
+      participantsCount: 1000,
+      canSendMsgs: true,
+      availableMsgs: ['0'],
+    };
+    const existingMessages: PromotionQueuedMessage[] = [];
+
+    const adapter: PromotionFlowAdapter<TestChannel> = {
+      isActive: () => true,
+      getStats: () => ({ successCount: 0, failedCount: 0, failStreak: 0, daysLeft: 1 }),
+      loadChannels: async () => [channel],
+      getChannel: async () => channel,
+      getIntelligenceDocs: async () => [collection.docs.get('ch1')!],
+      getIntelligenceDoc: async () => collection.docs.get('ch1')!,
+      sendPromotion: async ({ candidate }) => ({ sent: true, messageId: 101, messageIndex: candidate.randomIndex }),
+      checkMessage: async () => ({ status: 'exists', messageText: 'full promo message text' }),
+      onMessageExisting: (message) => { existingMessages.push(message); },
+      sleep: async () => {},
+    };
+
+    const runner = new PromotionFlowRunner(adapter, {
+      account,
+      scoringEnabled: false,
+      messageBanditEnabled: false,
+      redisLockEnabled: false,
+      attributionEnabled: false,
+      batchTarget: 1,
+      messageCheckDelayMs: 0,
+      channelLoopDelayMs: 0,
+    });
+
+    await runner.runOnce();
+    await runner.checkQueuedMessages();
+
+    expect(existingMessages).toHaveLength(1);
+    expect(existingMessages[0]).toMatchObject({
+      channelId: 'ch1',
+      messageId: 101,
+      messageText: 'full promo message text',
+    });
+    expect(runner.getQueueSize()).toBe(0);
+    runner.stop();
+  });
+
   it('isolates broken adapter logging from promotion execution', async () => {
     const collection = new CollectionMock<ChannelIntelligenceDocument>();
     collection.docs.set('ch-log', createDefaultIntelligence('ch-log'));
