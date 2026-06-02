@@ -643,8 +643,6 @@ describe('promotion policy', () => {
         .toEqual({ shouldSchedule: false, reason: 'instance cleaned up' });
       expect(evaluateFollowUpScheduling({ isFollowUp: false, channelAvailable: false }))
         .toEqual({ shouldSchedule: false, reason: 'channel unavailable' });
-      expect(evaluateFollowUpScheduling({ isFollowUp: false, daysLeft: 0 }))
-        .toEqual({ shouldSchedule: false, reason: 'account not premium' });
       expect(evaluateFollowUpScheduling({
         isFollowUp: false,
         activeFollowUpCount: 10,
@@ -661,7 +659,9 @@ describe('promotion policy', () => {
       })).toEqual({ shouldSchedule: true, reason: null });
 
       expect(evaluateFollowUpScheduling({ isFollowUp: false, daysLeft: Number.NaN }))
-        .toEqual({ shouldSchedule: false, reason: 'account not premium' });
+        .toEqual({ shouldSchedule: true, reason: null });
+      expect(evaluateFollowUpScheduling({ isFollowUp: false, daysLeft: 0 }))
+        .toEqual({ shouldSchedule: true, reason: null });
       expect(evaluateFollowUpScheduling({
         isFollowUp: false,
         activeFollowUpCount: Number.NaN,

@@ -31,6 +31,7 @@ import { normalizeChannelId } from '../utils/channel-id';
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const FAILED_CHANNEL_RETRY_MIN_MS = 5_000;
 const FAILED_CHANNEL_RETRY_MAX_MS = 10_000;
+type PromotionHookStatus = 'ok' | 'off' | 'fail' | 'skipped';
 
 interface ReadyMessage {
   message: PromotionQueuedMessage;
@@ -518,6 +519,9 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     this.health.totalSuccessfulSends += 1;
     this.health.lastSuccessfulSendAt = Date.now();
     await this.callHook('onSendSuccess', () => this.adapter.onSendSuccess?.(channel, result, isFollowUp));
+    let intelligenceStatus: PromotionHookStatus = 'ok';
+    let attributionStatus: PromotionHookStatus = this.options.attributionEnabled ? 'ok' : 'off';
+    let redisLockStatus: PromotionHookStatus = this.options.redisLockEnabled ? 'ok' : 'off';
     try {
       await this.options.account.recordSuccess(channel.channelId, strategy, isFollowUp);
       await this.options.account.intelligence.refreshChannelMeta(
@@ -527,13 +531,15 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
         channel.participantsCount || 0,
       );
     } catch (error) {
+      intelligenceStatus = 'fail';
       this.log('warn', `Promotion intelligence success record failed after local success accounting; ${this.formatChannel(channel)} error=${this.normalizeError(error)}`);
     }
-    this.updateBandit(strategy, 1, channel);
+    const banditStatus = this.updateBandit(strategy, 1, channel);
     if (this.options.attributionEnabled) {
       try {
         await this.options.account.recordSend(channel.channelId);
       } catch (error) {
+        attributionStatus = 'fail';
         this.log('warn', `Promotion attribution record failed after local success accounting; ${this.formatChannel(channel)} error=${this.normalizeError(error)}`);
       }
     }
@@ -541,9 +547,16 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
       try {
         await this.options.account.markPromoted(channel.channelId);
       } catch (error) {
+        redisLockStatus = 'fail';
         this.log('warn', `Promotion Redis lock record failed after local success accounting; ${this.formatChannel(channel)} error=${this.normalizeError(error)}`);
       }
     }
+    this.logHookSummary('success', channel.channelId, strategy, isFollowUp, {
+      intelligence: intelligenceStatus,
+      attribution: attributionStatus,
+      redisLock: redisLockStatus,
+      bandit: banditStatus,
+    });
   }
 
   private async recordFailure(
@@ -564,12 +577,20 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     this.health.totalSendFailures += 1;
     this.health.lastSendFailureAt = Date.now();
     await this.callHook('onSendFailure', () => this.adapter.onSendFailure?.(channel, errorMessage, isFollowUp));
+    let intelligenceStatus: PromotionHookStatus = 'ok';
     try {
       await this.options.account.recordFailure(channel.channelId, strategy, errorMessage);
     } catch (error) {
+      intelligenceStatus = 'fail';
       this.log('warn', `Promotion intelligence failure record failed after local failure accounting; ${this.formatChannel(channel)} error=${this.normalizeError(error)}`);
     }
-    this.updateBandit(strategy, 0, channel);
+    const banditStatus = this.updateBandit(strategy, 0, channel);
+    this.logHookSummary('failure', channel.channelId, strategy, isFollowUp, {
+      intelligence: intelligenceStatus,
+      attribution: 'skipped',
+      redisLock: 'skipped',
+      bandit: banditStatus,
+    });
   }
 
   private resolveCandidateStrategy(candidate: PromotionMessageCandidate): MessageStrategy {
@@ -594,6 +615,7 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     this.health.totalDeletions += 1;
     this.health.lastDeletionAt = Date.now();
     await this.callHook('onMessageDeleted', () => this.adapter.onMessageDeleted?.(message, deletionPolicy));
+    let intelligenceStatus: PromotionHookStatus = 'ok';
     try {
       await this.options.account.recordDeletion(
         message.channelId,
@@ -602,9 +624,16 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
         message.isFollowUp,
       );
     } catch (error) {
+      intelligenceStatus = 'fail';
       this.log('warn', `Promotion intelligence deletion record failed after local deletion accounting; channelId=${message.channelId} error=${this.normalizeError(error)}`);
     }
-    this.updateBandit(strategy, 0, message);
+    const banditStatus = this.updateBandit(strategy, 0, message);
+    this.logHookSummary('deletion', message.channelId, strategy, message.isFollowUp, {
+      intelligence: intelligenceStatus,
+      attribution: 'skipped',
+      redisLock: 'skipped',
+      bandit: banditStatus,
+    });
   }
 
   private selectStrategy(
@@ -625,14 +654,41 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     strategy: MessageStrategy,
     reward: 0 | 1,
     source: PromotionChannelSnapshot | PromotionQueuedMessage,
-  ): void {
-    if (!this.options.messageBanditEnabled) return;
+  ): PromotionHookStatus {
+    if (!this.options.messageBanditEnabled) return 'off';
     try {
       this.bandit.update(strategy, reward);
+      return 'ok';
     } catch (error) {
       const channelId = 'channelId' in source ? source.channelId : 'unknown';
       this.log('warn', `Promotion bandit update failed; channelId=${channelId} strategy=${strategy} reward=${reward} error=${this.normalizeError(error)}`);
+      return 'fail';
     }
+  }
+
+  private logHookSummary(
+    event: 'success' | 'failure' | 'deletion',
+    channelId: string,
+    strategy: MessageStrategy,
+    isFollowUp: boolean,
+    statuses: {
+      intelligence: PromotionHookStatus;
+      attribution: PromotionHookStatus;
+      redisLock: PromotionHookStatus;
+      bandit: PromotionHookStatus;
+    },
+  ): void {
+    this.log('debug', [
+      'Promotion hook summary',
+      `event=${event}`,
+      `channelId=${channelId}`,
+      `strategy=${strategy}`,
+      `isFollowUp=${isFollowUp}`,
+      `intelligence=${statuses.intelligence}`,
+      `attribution=${statuses.attribution}`,
+      `redisLock=${statuses.redisLock}`,
+      `bandit=${statuses.bandit}`,
+    ].join('; '));
   }
 
   private async scheduleFollowUp(message: PromotionQueuedMessage): Promise<void> {

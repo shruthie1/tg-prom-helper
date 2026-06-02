@@ -164,7 +164,7 @@ The repeated audit loop is supervised by `docs/channel-message-promotions-audit-
 - Runtime account is created with whitespace-padded identifiers or blank channel IDs.
 - Serialized bandit state contains negative, `NaN`, or unknown-arm counters.
 - Runner options contain `NaN`, `Infinity`, negative, or fractional timing, batch, and follow-up cap values.
-- Adapter stats return malformed premium days before follow-up scheduling.
+- Adapter stats return malformed release-day values before follow-up scheduling.
 - Queue check sees an existing Telegram message but stats loading fails before follow-up scheduling.
 - Externally owned queue contains a future-dated or malformed timestamp for a deleted message.
 - Previous local promotion failure has a future-dated or invalid `lastCheckTimestamp`.

@@ -1448,7 +1448,7 @@ describe('PromotionFlowRunner', () => {
     }
   });
 
-  it('does not schedule follow-up when premium days are exhausted', async () => {
+  it('schedules follow-up even when release days are exhausted', async () => {
     jest.useFakeTimers();
     const collection = new CollectionMock<ChannelIntelligenceDocument>();
     collection.docs.set('ch4b', createDefaultIntelligence('ch4b'));
@@ -1498,15 +1498,18 @@ describe('PromotionFlowRunner', () => {
       await runner.checkQueuedMessages();
       await jest.runOnlyPendingTimersAsync();
 
-      expect(sent).toEqual([{ kind: 'legacy', isFollowUp: false }]);
-      expect(scheduledFollowUps).toEqual([]);
+      expect(sent).toEqual([
+        { kind: 'legacy', isFollowUp: false },
+        { kind: 'followUp', isFollowUp: true },
+      ]);
+      expect(scheduledFollowUps).toEqual(['ch4b']);
     } finally {
       runner.stop();
       jest.useRealTimers();
     }
   });
 
-  it('skips a scheduled follow-up if premium expires before execution', async () => {
+  it('runs a scheduled follow-up even if release days expire before execution', async () => {
     jest.useFakeTimers();
     const collection = new CollectionMock<ChannelIntelligenceDocument>();
     const account = await createAccount(collection);
@@ -1567,9 +1570,9 @@ describe('PromotionFlowRunner', () => {
       await runner.checkQueuedMessages();
       await jest.runOnlyPendingTimersAsync();
 
-      expect(statsCalls).toBe(2);
-      expect(getChannelCalls).toBe(0);
-      expect(followUpSends).toBe(0);
+      expect(statsCalls).toBe(3);
+      expect(getChannelCalls).toBe(1);
+      expect(followUpSends).toBe(1);
     } finally {
       runner.stop();
       jest.useRealTimers();

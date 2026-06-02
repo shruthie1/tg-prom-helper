@@ -7,7 +7,6 @@ export function evaluateFollowUpScheduling(input: FollowUpPolicyInput): FollowUp
   if (input.isFollowUp === true) return { shouldSchedule: false, reason: 'already follow-up' };
   if (input.isCleanedUp === true) return { shouldSchedule: false, reason: 'instance cleaned up' };
   if (input.channelAvailable === false) return { shouldSchedule: false, reason: 'channel unavailable' };
-  if (safeDaysLeft(input.daysLeft) <= 0) return { shouldSchedule: false, reason: 'account not premium' };
   if (
     input.activeFollowUpCount !== undefined
     && input.maxFollowUpCount !== undefined
@@ -24,11 +23,6 @@ export function calculateFollowUpDelay(
   random: () => number = Math.random,
 ): number {
   return Math.max(0, safeNonNegative(baseDelayMs) + symmetricJitter(jitterRangeMs, random));
-}
-
-function safeDaysLeft(daysLeft: number | undefined): number {
-  if (daysLeft === undefined) return 1;
-  return safeNonNegative(daysLeft);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
