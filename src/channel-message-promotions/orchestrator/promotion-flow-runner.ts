@@ -255,7 +255,7 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
       return 'skipped';
     }
     this.log('debug', `Promotion channel attempt start; ${this.formatChannel(channel)} isFollowUp=${isFollowUp}`);
-    const eligible = await this.evaluateEligibility(channel);
+    const eligible = await this.evaluateEligibility(channel, isFollowUp);
     if (!eligible) return 'skipped';
 
     const stats = await this.getStatsOrDefault('message planning');
@@ -421,7 +421,7 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
     return this.startedByStart && !this.running;
   }
 
-  private async evaluateEligibility(channel: TChannel): Promise<boolean> {
+  private async evaluateEligibility(channel: TChannel, isFollowUp: boolean): Promise<boolean> {
     let percentiles = null;
     if (this.options.scoringEnabled && this.adapter.getPercentiles) {
       try {
@@ -431,7 +431,7 @@ export class PromotionFlowRunner<TChannel extends PromotionChannelSnapshot> {
       }
     }
     let recentlyPromotedByOtherAccount = false;
-    if (this.options.redisLockEnabled) {
+    if (this.options.redisLockEnabled && !isFollowUp) {
       try {
         recentlyPromotedByOtherAccount = await this.options.account.isRecentlyPromoted(channel.channelId);
       } catch (error) {

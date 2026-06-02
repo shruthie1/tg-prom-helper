@@ -2,13 +2,13 @@
  * Redis-based cross-account channel dedup.
  *
  * Prevents multiple promote accounts from hitting the same channel
- * within a 30-minute window.
+ * within a short window.
  */
 
 import type { RedisLike } from '../../types';
 import { normalizeChannelId } from '../utils/channel-id';
 
-const LOCK_TTL = 1800; // 30 minutes
+const LOCK_TTL = 300; // 5 minutes
 
 export class RedisChannelLock {
   private static instance: RedisChannelLock | undefined;
