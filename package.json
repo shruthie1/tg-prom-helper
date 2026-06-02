@@ -1,6 +1,6 @@
 {
   "name": "promo-helper",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Shared promotion intelligence — channel scoring, percentile engine, Thompson Sampling, Redis locks, conversion attribution",
   "type": "commonjs",
   "main": "dist/index.js",
