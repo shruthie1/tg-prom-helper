@@ -146,7 +146,6 @@ export class PercentileEngine {
       {
         $addFields: {
           _safeSuccess: safeMongoNumber('$successMsgCount'),
-          _safeFailure: safeMongoNumber('$failureMsgCount'),
           _safeDeleted: safeMongoNumber('$deletedCount'),
           _safeParticipants: safeMongoNumber('$participantsCount'),
           _safeFollowupSuccess: safeMongoNumber('$followupMsgSuccessCount'),
@@ -155,22 +154,9 @@ export class PercentileEngine {
       {
         $addFields: {
           _totalAttempts: {
-            $add: ['$_safeSuccess', '$_safeFailure'],
+            $add: ['$_safeSuccess', '$_safeFollowupSuccess'],
           },
-          _successRate: {
-            $cond: [
-              {
-                $gt: [{ $add: ['$_safeSuccess', '$_safeFailure'] }, 4],
-              },
-              {
-                $divide: [
-                  '$_safeSuccess',
-                  { $add: ['$_safeSuccess', '$_safeFailure'] },
-                ],
-              },
-              null,
-            ],
-          },
+          _successRate: null,
           _deleteRate: {
             $cond: [
               { $gt: ['$_safeSuccess', 0] },
@@ -341,11 +327,19 @@ function parsePercentiles(value: unknown): ChannelPercentiles | null {
   if (!isRecord(value)) return null;
   const parsed: Partial<ChannelPercentiles> = {};
   for (const metric of METRICS) {
+    if (metric === 'successRate') {
+      parsed[metric] = emptyBuckets();
+      continue;
+    }
     const buckets = sanitizeBuckets(value[metric]);
     if (!buckets) return null;
     parsed[metric] = buckets;
   }
   return parsed as ChannelPercentiles;
+}
+
+function emptyBuckets(): PercentileBuckets {
+  return { p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, count: 0 };
 }
 
 function sanitizeBuckets(value: unknown): PercentileBuckets | null {

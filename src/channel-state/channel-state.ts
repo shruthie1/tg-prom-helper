@@ -331,9 +331,7 @@ export function evaluateChannelPromotionHealth(
   const sendabilityPass = sendability.canSend && channel.canSendMsgs === true;
   const banned = channel.banned === true;
   const successMsgCount = safeNonNegativeNumber(channel.successMsgCount);
-  const failureMsgCount = safeNonNegativeNumber(channel.failureMsgCount);
   const followupMsgSuccessCount = safeNonNegativeNumber(channel.followupMsgSuccessCount);
-  const followupMsgFailureCount = safeNonNegativeNumber(channel.followupMsgFailureCount);
   const deletedCount = safeNonNegativeNumber(channel.deletedCount);
   const wordRestriction = safeNonNegativeNumber(channel.wordRestriction);
   const dMRestriction = safeNonNegativeNumber(channel.dMRestriction);
@@ -385,7 +383,6 @@ export function evaluateChannelPromotionHealth(
   const score = Math.max(0, Math.min(100, 100
     - contentPenalty(contentHealth)
     - deletionPenalty(deletionRate)
-    - failurePenalty(successMsgCount + followupMsgSuccessCount, failureMsgCount + followupMsgFailureCount)
     - activityPenalty(channelActivity)
     - recentUniqueUserPenalty(recentUniqueUsers, channel.lastUniqueUserCheckAt, now, activitySignalTtlDays)
     - moderationPenalty(wordRestriction + dMRestriction)));
@@ -591,15 +588,6 @@ function contentPenalty(contentHealth: ChannelPromotionHealthResult['signals']['
 function deletionPenalty(deletionRate: ChannelPromotionHealthResult['signals']['deletionRate']): number {
   if (deletionRate === 'severe') return 35;
   if (deletionRate === 'moderate') return 15;
-  return 0;
-}
-
-function failurePenalty(successCount: number, failureCount: number): number {
-  const totalAttempts = successCount + failureCount;
-  if (totalAttempts < 3) return 0;
-  const failureRate = failureCount / totalAttempts;
-  if (failureRate >= 0.80) return 25;
-  if (failureRate >= 0.50) return 10;
   return 0;
 }
 

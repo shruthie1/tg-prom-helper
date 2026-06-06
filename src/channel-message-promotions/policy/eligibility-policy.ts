@@ -29,7 +29,6 @@ export function evaluatePromotionChannelEligibility(
   const participantsCount = safeNonNegative(channel.participantsCount);
   const deletedCount = safeNonNegative(channel.deletedCount);
   const successMsgCount = safeNonNegative(channel.successMsgCount);
-  const failureMsgCount = safeNonNegative(channel.failureMsgCount);
 
   if (recentlyQueued === true) return { eligible: false, reason: 'Recently promoted (in queue)' };
   if (recentlyPromotedByOtherAccount === true) {
@@ -51,14 +50,8 @@ export function evaluatePromotionChannelEligibility(
   }
 
   if (scoringEnabled === true && percentiles) {
-    const totalAttempts = successMsgCount + failureMsgCount;
-    if (totalAttempts >= 5) {
-      const successRate = successMsgCount / totalAttempts;
+    if (successMsgCount >= 5) {
       const deleteRate = deletedCount / Math.max(1, successMsgCount);
-
-      if (safePercentileRank(percentiles, successRate, 'successRate') < 0.10 && totalAttempts > 20) {
-        return { eligible: false, reason: `Success rate ${(successRate * 100).toFixed(1)}% in bottom 10%` };
-      }
 
       const deleteRank = safePercentileRank(percentiles, deleteRate, 'deleteRate');
       if (deleteRank >= 0.90 && safeUnitRandom(random) > 0.1) return { eligible: false, reason: 'Delete rate p90+' };

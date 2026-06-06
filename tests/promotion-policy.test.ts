@@ -258,11 +258,11 @@ describe('promotion policy', () => {
       })).toEqual({ eligible: false, reason: 'Delete rate p75-p90' });
     });
 
-    it('blocks bottom-decile success rate and participant channels under scoring', () => {
+    it('does not block account-local failure counts under scoring', () => {
       const percentiles = {
         getPercentileRankSync: (_value: number, metric: string) => {
           if (metric === 'successRate') return 0.05;
-          if (metric === 'participantsCount') return 0.05;
+          if (metric === 'participantsCount') return 0.50;
           return 0.50;
         },
       };
@@ -277,7 +277,16 @@ describe('promotion policy', () => {
           canSendMsgs: true,
         },
         percentiles,
-      })).toEqual({ eligible: false, reason: 'Success rate 4.0% in bottom 10%' });
+      })).toEqual({ eligible: true, reason: null });
+    });
+
+    it('blocks bottom-decile participant channels under scoring', () => {
+      const percentiles = {
+        getPercentileRankSync: (_value: number, metric: string) => {
+          if (metric === 'participantsCount') return 0.05;
+          return 0.50;
+        },
+      };
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,

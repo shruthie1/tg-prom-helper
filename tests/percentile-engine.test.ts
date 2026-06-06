@@ -98,7 +98,8 @@ describe('PercentileEngine', () => {
       expect(p.conversionRate).toBeDefined();
 
       // Percentile ordering: p10 <= p25 <= p50 <= p75 <= p90
-      for (const key of ['successRate', 'deleteRate', 'participantsCount', 'messageVolume'] as const) {
+      expect(p.successRate.count).toBe(0);
+      for (const key of ['deleteRate', 'participantsCount', 'messageVolume'] as const) {
         const b = p[key];
         expect(b.p10).toBeLessThanOrEqual(b.p25);
         expect(b.p25).toBeLessThanOrEqual(b.p50);
@@ -202,7 +203,7 @@ describe('PercentileEngine', () => {
       expect(p.participantsCount.count).toBe(1);
       expect(p.participantsCount.p50).toBe(900);
       expect(p.messageVolume.count).toBe(1);
-      expect(p.messageVolume.p50).toBe(15);
+      expect(p.messageVolume.p50).toBe(14);
       expect(p.deletedCount.p10).toBeGreaterThanOrEqual(0);
     });
   });
@@ -263,7 +264,8 @@ describe('PercentileEngine', () => {
       // Should still succeed by falling through to computeAndCache
       const p = await engine.getPercentiles();
       expect(p.successRate).toBeDefined();
-      expect(p.successRate.count).toBeGreaterThan(0);
+      expect(p.successRate.count).toBe(0);
+      expect(p.participantsCount.count).toBeGreaterThan(0);
     });
 
     it('falls back to computation when Redis has valid JSON with invalid percentile shape', async () => {
@@ -276,8 +278,25 @@ describe('PercentileEngine', () => {
 
       const p = await engine.getPercentiles();
 
-      expect(p.successRate.count).toBeGreaterThan(0);
+      expect(p.successRate.count).toBe(0);
       expect(p.participantsCount).toBeDefined();
+    });
+
+    it('drops stale cached success-rate percentiles from older helper builds', async () => {
+      await seedActiveChannels(activeChannels, 30);
+      const fresh = await engine.getPercentiles();
+
+      await redis.set('percentiles:channels', JSON.stringify({
+        ...fresh,
+        successRate: { p10: 0.1, p25: 0.2, p50: 0.3, p75: 0.4, p90: 0.5, count: 30 },
+      }), 'EX', 3600);
+      (engine as any).cache = null;
+      (engine as any).lastComputed = 0;
+
+      const p = await engine.getPercentiles();
+
+      expect(p.successRate).toEqual({ p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, count: 0 });
+      expect(p.participantsCount.count).toBeGreaterThan(0);
     });
 
     it('falls back to default buckets when active-channel aggregation fails or returns malformed data', async () => {
