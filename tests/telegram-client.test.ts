@@ -113,6 +113,32 @@ describe('telegram client adapters', () => {
     }));
   });
 
+  it('marks forbidden Telegram entities as not sendable', async () => {
+    const client = {
+      async getEntity() {
+        throw new Error('getEntity should not be called');
+      },
+    };
+
+    const liveFacts = await getTelegramChannelLiveFacts(client, {
+      channelId: '123',
+      entity: {
+        className: 'ChannelForbidden',
+        title: 'Private promos',
+        broadcast: false,
+        megagroup: true,
+        accessHash: '99',
+      },
+    });
+
+    expect(liveFacts).toEqual(expect.objectContaining({
+      channelId: '123',
+      private: true,
+      forbidden: true,
+      canSendMsgs: false,
+    }));
+  });
+
   it('fetches normalized common chat ids from a TelegramClient-like invoker', async () => {
     const client = {
       async invoke(request: unknown) {

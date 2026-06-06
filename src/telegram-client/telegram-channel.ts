@@ -18,9 +18,12 @@ export interface TelegramChannelEntitySnapshot {
   restricted?: unknown;
   broadcast?: unknown;
   left?: unknown;
+  private?: unknown;
+  forbidden?: unknown;
   megagroup?: unknown;
   defaultBannedRights?: unknown;
   accessHash?: unknown;
+  className?: unknown;
 }
 
 export interface TelegramChannelLiveFactsInput {
@@ -49,6 +52,7 @@ export async function getTelegramChannelLiveFacts(
   const entity = input.entity ?? await getEntityFromClient(client, input.peer ?? `-100${normalizedChannelId}`);
   if (!isRecord(entity)) return null;
 
+  const forbiddenEntity = isForbiddenTelegramEntity(entity);
   const participantsCount = await resolveParticipantsCount(entity, normalizedChannelId, input.resolveParticipantsCount);
   const factsInput: TelegramChannelLiveFacts = {
     channelId: normalizedChannelId,
@@ -58,6 +62,8 @@ export async function getTelegramChannelLiveFacts(
     restricted: entity['restricted'] === true,
     broadcast: entity['broadcast'] === true,
     left: entity['left'] === true,
+    private: entity['private'] === true || forbiddenEntity,
+    forbidden: entity['forbidden'] === true || forbiddenEntity,
     defaultBannedRights: extractDefaultBannedRights(entity['defaultBannedRights']),
     megagroup: entity['megagroup'] === true,
     accessHash: stringOrNull(entity['accessHash']),
@@ -111,6 +117,12 @@ function stringOrNull(input: unknown): string | null {
   if (input === null || input === undefined) return null;
   const value = String(input).trim();
   return value ? value : null;
+}
+
+function isForbiddenTelegramEntity(entity: Record<string, unknown>): boolean {
+  const className = stringOrNull(entity['className'])
+    || stringOrNull((entity.constructor as { name?: unknown } | undefined)?.name);
+  return className === 'ChannelForbidden' || className === 'ChatForbidden';
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {
