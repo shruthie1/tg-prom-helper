@@ -107,7 +107,7 @@ describe('promotion policy', () => {
         channel: {
           channelId: 'ch1',
           participantsCount: 40,
-          deletedCount: 4,
+          deletedCount: 5,
           failureMsgCount: 9,
           availableMsgs: [],
           wordRestriction: 8,

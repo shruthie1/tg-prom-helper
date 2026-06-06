@@ -220,6 +220,41 @@ describe('channel-state policy', () => {
     expect(result.signals.channelActivity).toBe('low');
   });
 
+  it('classifies deletion health by sample window and delete-rate percentage', () => {
+    const belowSampleWindow = evaluateChannelPromotionHealth({
+      channelId: '1',
+      canSendMsgs: true,
+      sendMessages: false,
+      sendPlain: false,
+      participantsCount: 1000,
+      successMsgCount: 0,
+      deletedCount: 4,
+    });
+    expect(belowSampleWindow.signals.deletionRate).toBe('low');
+
+    const severeByRate = evaluateChannelPromotionHealth({
+      channelId: '1',
+      canSendMsgs: true,
+      sendMessages: false,
+      sendPlain: false,
+      participantsCount: 1000,
+      successMsgCount: 0,
+      deletedCount: 5,
+    });
+    expect(severeByRate.signals.deletionRate).toBe('severe');
+
+    const moderateByRate = evaluateChannelPromotionHealth({
+      channelId: '1',
+      canSendMsgs: true,
+      sendMessages: false,
+      sendPlain: false,
+      participantsCount: 1000,
+      successMsgCount: 6,
+      deletedCount: 4,
+    });
+    expect(moderateByRate.signals.deletionRate).toBe('moderate');
+  });
+
   it('uses fresh low-unique-user history as a strong activity penalty', () => {
     const result = evaluateChannelPromotionHealth({
       channelId: '1',
@@ -235,6 +270,17 @@ describe('channel-state policy', () => {
     expect(result.promotable).toBe(false);
     expect(result.score).toBe(20);
     expect(result.signals.channelActivity).toBe('dead');
+
+    expect(evaluateChannelPromotionHealth({
+      channelId: '1',
+      canSendMsgs: true,
+      sendMessages: false,
+      sendPlain: false,
+      participantsCount: 1000,
+      recentUniqueUsers: 7,
+      lastUniqueUserCheckAt: now,
+      now,
+    }).signals.channelActivity).toBe('active');
 
     expect(evaluateChannelPromotionHealth({
       channelId: '1',
@@ -258,7 +304,7 @@ describe('channel-state policy', () => {
       participantsCount: 40,
       successMsgCount: 0,
       failureMsgCount: 9,
-      deletedCount: 4,
+      deletedCount: 5,
       wordRestriction: 8,
     }).promotable).toBe(false);
 

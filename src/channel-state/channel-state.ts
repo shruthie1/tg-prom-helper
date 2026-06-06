@@ -113,6 +113,13 @@ export interface ChannelPromotionHealthOptions {
   threshold?: number;
   probeCooldownDays?: number;
   probeMinSuccess?: number;
+  probeMinSamples?: number;
+  probeMinSuccessRatePercent?: number;
+  deleteRateMinSamples?: number;
+  deleteRateModeratePercent?: number;
+  deleteRateSeverePercent?: number;
+  activityDeadUniquePercent?: number;
+  activityLowUniquePercent?: number;
   activitySignalTtlDays?: number;
 }
 
@@ -154,6 +161,12 @@ export interface PromotionFailureAction {
 export const DEFAULT_CHANNEL_HEALTH_THRESHOLD = 20;
 export const DEFAULT_CHANNEL_PROBE_COOLDOWN_DAYS = 30;
 export const DEFAULT_CHANNEL_PROBE_MIN_SUCCESS = 3;
+export const DEFAULT_CHANNEL_PROBE_MIN_SUCCESS_RATE_PERCENT = 50;
+export const DEFAULT_CHANNEL_DELETE_RATE_MIN_SAMPLES = 5;
+export const DEFAULT_CHANNEL_DELETE_RATE_MODERATE_PERCENT = 40;
+export const DEFAULT_CHANNEL_DELETE_RATE_SEVERE_PERCENT = 70;
+export const DEFAULT_CHANNEL_ACTIVITY_DEAD_UNIQUE_PERCENT = 0.2;
+export const DEFAULT_CHANNEL_ACTIVITY_LOW_UNIQUE_PERCENT = 0.5;
 export const DEFAULT_CHANNEL_ACTIVITY_SIGNAL_TTL_DAYS = 30;
 
 const DEFAULT_CRITICAL_FIELDS: readonly (keyof ChannelDocumentSnapshot)[] = [
@@ -323,6 +336,16 @@ export function evaluateChannelPromotionHealth(
   const threshold = safePositiveNumber(options.threshold, DEFAULT_CHANNEL_HEALTH_THRESHOLD);
   const probeCooldownDays = safePositiveNumber(options.probeCooldownDays, DEFAULT_CHANNEL_PROBE_COOLDOWN_DAYS);
   const probeMinSuccess = safeNonNegativeNumber(options.probeMinSuccess, DEFAULT_CHANNEL_PROBE_MIN_SUCCESS);
+  const probeMinSamples = safePositiveNumber(options.probeMinSamples, Math.max(1, probeMinSuccess));
+  const probeMinSuccessRate = safePercentRatio(options.probeMinSuccessRatePercent, DEFAULT_CHANNEL_PROBE_MIN_SUCCESS_RATE_PERCENT);
+  const deleteRateMinSamples = safePositiveNumber(options.deleteRateMinSamples, DEFAULT_CHANNEL_DELETE_RATE_MIN_SAMPLES);
+  const deleteRateModerate = safePercentRatio(options.deleteRateModeratePercent, DEFAULT_CHANNEL_DELETE_RATE_MODERATE_PERCENT);
+  const deleteRateSevere = safePercentRatio(options.deleteRateSeverePercent, DEFAULT_CHANNEL_DELETE_RATE_SEVERE_PERCENT);
+  const activityDeadUniqueRate = safePercentRatio(options.activityDeadUniquePercent, DEFAULT_CHANNEL_ACTIVITY_DEAD_UNIQUE_PERCENT);
+  const activityLowUniqueRate = Math.max(
+    activityDeadUniqueRate,
+    safePercentRatio(options.activityLowUniquePercent, DEFAULT_CHANNEL_ACTIVITY_LOW_UNIQUE_PERCENT),
+  );
   const activitySignalTtlDays = safePositiveNumber(options.activitySignalTtlDays, DEFAULT_CHANNEL_ACTIVITY_SIGNAL_TTL_DAYS);
   const now = safePositiveNumber(channel.now, Date.now());
 
@@ -338,13 +361,22 @@ export function evaluateChannelPromotionHealth(
   const participantsCount = safeNonNegativeNumber(channel.participantsCount);
   const recentUniqueUsers = safeNonNegativeNumber(channel.recentUniqueUsers);
   const contentHealth = classifyContentHealth(channel.availableMsgs);
-  const deletionRate = classifyDeletionRate(deletedCount, successMsgCount + followupMsgSuccessCount);
+  const survivingMessages = successMsgCount + followupMsgSuccessCount;
+  const moderatedAttempts = deletedCount + survivingMessages;
+  const successRate = moderatedAttempts > 0 ? survivingMessages / moderatedAttempts : 0;
+  const deletionRate = classifyDeletionRate(deletedCount, survivingMessages, {
+    minSamples: deleteRateMinSamples,
+    moderateRate: deleteRateModerate,
+    severeRate: deleteRateSevere,
+  });
   const channelActivity = classifyChannelActivity({
     participantsCount,
     recentUniqueUsers,
     lastUniqueUserCheckAt: channel.lastUniqueUserCheckAt,
     now,
     ttlDays: activitySignalTtlDays,
+    deadUniqueRate: activityDeadUniqueRate,
+    lowUniqueRate: activityLowUniqueRate,
   });
   const signals = {
     sendability: (banned ? probeSendability.canSend : sendabilityPass) ? 'pass' as const : 'fail' as const,
@@ -357,7 +389,8 @@ export function evaluateChannelPromotionHealth(
   const probeEligible = banned
     && probeSendability.canSend
     && isProbeCooldownElapsed(channel.bannedAt, now, probeCooldownDays)
-    && successMsgCount >= probeMinSuccess
+    && moderatedAttempts >= probeMinSamples
+    && successRate >= probeMinSuccessRate
     && deletionRate !== 'severe';
 
   if (!banned && !sendabilityPass) {
@@ -384,7 +417,14 @@ export function evaluateChannelPromotionHealth(
     - contentPenalty(contentHealth)
     - deletionPenalty(deletionRate)
     - activityPenalty(channelActivity)
-    - recentUniqueUserPenalty(recentUniqueUsers, channel.lastUniqueUserCheckAt, now, activitySignalTtlDays)
+    - recentUniqueUserPenalty({
+      recentUniqueUsers,
+      participantsCount,
+      lastUniqueUserCheckAt: channel.lastUniqueUserCheckAt,
+      now,
+      ttlDays: activitySignalTtlDays,
+      deadUniqueRate: activityDeadUniqueRate,
+    })
     - moderationPenalty(wordRestriction + dMRestriction)));
 
   const promotable = score > threshold;
@@ -546,6 +586,10 @@ function safePositiveNumber(value: unknown, fallback: number): number {
   return fallback;
 }
 
+function safePercentRatio(value: unknown, fallbackPercent: number): number {
+  return safePositiveNumber(value, fallbackPercent) / 100;
+}
+
 function classifyContentHealth(availableMsgs: unknown): ChannelPromotionHealthResult['signals']['contentHealth'] {
   if (!Array.isArray(availableMsgs)) return 'healthy';
   if (availableMsgs.length === 0) return 'exhausted';
@@ -553,12 +597,20 @@ function classifyContentHealth(availableMsgs: unknown): ChannelPromotionHealthRe
   return 'healthy';
 }
 
-function classifyDeletionRate(deletedCount: number, survivingMessages: number): ChannelPromotionHealthResult['signals']['deletionRate'] {
-  if (deletedCount >= 3 && survivingMessages <= 0) return 'severe';
+function classifyDeletionRate(
+  deletedCount: number,
+  survivingMessages: number,
+  thresholds: {
+    minSamples: number;
+    moderateRate: number;
+    severeRate: number;
+  },
+): ChannelPromotionHealthResult['signals']['deletionRate'] {
   const totalMessages = deletedCount + survivingMessages;
+  if (totalMessages < thresholds.minSamples) return 'low';
   const deleteRate = totalMessages > 0 ? deletedCount / totalMessages : 0;
-  if (deletedCount >= 5 && deleteRate >= 0.70) return 'severe';
-  if (deletedCount >= 3 && deleteRate >= 0.40) return 'moderate';
+  if (deleteRate >= thresholds.severeRate) return 'severe';
+  if (deleteRate >= thresholds.moderateRate) return 'moderate';
   return 'low';
 }
 
@@ -568,10 +620,17 @@ function classifyChannelActivity(input: {
   lastUniqueUserCheckAt: unknown;
   now: number;
   ttlDays: number;
+  deadUniqueRate: number;
+  lowUniqueRate: number;
 }): ChannelPromotionHealthResult['signals']['channelActivity'] {
   if (isFreshActivitySignal(input.lastUniqueUserCheckAt, input.now, input.ttlDays)) {
-    if (input.recentUniqueUsers < 8) return 'dead';
-    if (input.recentUniqueUsers < 20) return 'low';
+    if (input.participantsCount > 0) {
+      const activeRate = input.recentUniqueUsers / input.participantsCount;
+      if (activeRate < input.deadUniqueRate) return 'dead';
+      if (activeRate < input.lowUniqueRate) return 'low';
+      return 'active';
+    }
+    if (input.recentUniqueUsers <= 0) return 'dead';
   }
   const participantsCount = input.participantsCount;
   if (participantsCount < 50) return 'dead';
@@ -597,14 +656,20 @@ function activityPenalty(channelActivity: ChannelPromotionHealthResult['signals'
   return 0;
 }
 
-function recentUniqueUserPenalty(
-  recentUniqueUsers: number,
-  lastUniqueUserCheckAt: unknown,
-  now: number,
-  ttlDays: number,
-): number {
-  if (!isFreshActivitySignal(lastUniqueUserCheckAt, now, ttlDays)) return 0;
-  return recentUniqueUsers < 8 ? 60 : 0;
+function recentUniqueUserPenalty(input: {
+  recentUniqueUsers: number;
+  participantsCount: number;
+  lastUniqueUserCheckAt: unknown;
+  now: number;
+  ttlDays: number;
+  deadUniqueRate: number;
+}): number {
+  if (!isFreshActivitySignal(input.lastUniqueUserCheckAt, input.now, input.ttlDays)) return 0;
+  if (input.participantsCount > 0) {
+    const activeRate = input.recentUniqueUsers / input.participantsCount;
+    return activeRate < input.deadUniqueRate ? 60 : 0;
+  }
+  return input.recentUniqueUsers <= 0 ? 60 : 0;
 }
 
 function moderationPenalty(totalRestrictionCount: number): number {
