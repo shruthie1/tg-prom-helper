@@ -285,8 +285,8 @@ export function mergeHydratedChannelFacts(
 ): HydratedChannelMergeResult {
   const liveFacts = deriveTelegramChannelLiveFacts(liveFactsInput);
   const canSendMsgs = computeLiveCanSendMsgs(liveFacts);
-  const banned = existing?.banned === true;
-  const clearedGlobalRestrictions = !banned && (
+  const banned = canSendMsgs ? false : existing?.banned === true;
+  const clearedGlobalRestrictions = (existing?.banned === true && !banned) || (
     (existing?.private === true && liveFacts.private !== true)
     || (existing?.forbidden === true && liveFacts.forbidden !== true)
     || (existing?.restricted === true && liveFacts.restricted !== true)
@@ -412,7 +412,6 @@ export function resolvePromotionFailureAction(input: PromotionFailureActionInput
     }
   }
   const classified = classifyTelegramChannelError(actionInput.error);
-  const now = safePositiveNumber(actionInput.now, Date.now());
   const base = {
     code: classified.code,
     reason: classified.reason,
@@ -426,7 +425,7 @@ export function resolvePromotionFailureAction(input: PromotionFailureActionInput
   if (classified.code === 'USER_BANNED_IN_CHANNEL') {
     return {
       ...base,
-      channelUpdate: { banned: true, bannedAt: now, canSendMsgs: false },
+      channelUpdate: null,
       skipPersist: false,
     };
   }

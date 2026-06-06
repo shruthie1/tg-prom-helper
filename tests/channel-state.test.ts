@@ -135,7 +135,7 @@ describe('channel-state policy', () => {
     expect(result.patch.lastHydrationReason).toBe('live_sendable');
   });
 
-  it('preserves global banned flags when live Telegram facts are sendable', () => {
+  it('clears stale banned flags when live Telegram facts are sendable', () => {
     const result = mergeHydratedChannelFacts(
       { channelId: '1', banned: true, canSendMsgs: false },
       {
@@ -151,8 +151,8 @@ describe('channel-state policy', () => {
     );
 
     expect(result.canSendMsgs).toBe(true);
-    expect(result.clearedGlobalRestrictions).toBe(false);
-    expect(result.patch.banned).toBe(true);
+    expect(result.clearedGlobalRestrictions).toBe(true);
+    expect(result.patch.banned).toBe(false);
     expect(result.patch.lastHydrationReason).toBe('live_sendable');
   });
 
@@ -281,11 +281,10 @@ describe('channel-state policy', () => {
   });
 
   it('resolves promotion failure persistence consistently', () => {
-    expect(resolvePromotionFailureAction({ error: 'USER_BANNED_IN_CHANNEL', now }).channelUpdate).toEqual({
-      banned: true,
-      bannedAt: now,
-      canSendMsgs: false,
-    });
+    const accountScopedBan = resolvePromotionFailureAction({ error: 'USER_BANNED_IN_CHANNEL', now });
+    expect(accountScopedBan.scope).toBe('account_channel');
+    expect(accountScopedBan.channelUpdate).toBeNull();
+    expect(accountScopedBan.skipPersist).toBe(false);
     expect(resolvePromotionFailureAction('Telegram entity not found').channelUpdate).toEqual({
       forbidden: true,
       canSendMsgs: false,
