@@ -6,6 +6,7 @@ export interface PromotionChannelSnapshot {
   username?: string | null;
   participantsCount?: number | null;
   banned?: boolean;
+  bannedAt?: number | Date | null;
   restricted?: boolean;
   forbidden?: boolean;
   private?: boolean;
@@ -18,6 +19,8 @@ export interface PromotionChannelSnapshot {
   failureMsgCount?: number | null;
   wordRestriction?: number | null;
   dMRestriction?: number | null;
+  recentUniqueUsers?: number | null;
+  lastUniqueUserCheckAt?: number | Date | null;
   availableMsgs?: string[];
 }
 

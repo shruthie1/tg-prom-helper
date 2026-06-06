@@ -64,11 +64,11 @@ export class ConversionAttributionService {
   /**
    * Attribute a conversion to source channels using common chat IDs.
    *
-   * The caller (tg-aut) must provide the common chat IDs obtained via
-   * client.invoke(new Api.messages.GetCommonChats({ userId, maxId: 0, limit: 100 }))
+   * The caller must provide common chat IDs, typically from
+   * getTelegramCommonChatIds(client, { userId, limit: 100 }).
    *
-   * This keeps the Telegram API call in tg-aut (where the client lives)
-   * and keeps this service pure logic.
+   * This keeps the active Telegram client in tg-aut/promote-clients while
+   * keeping this service pure attribution logic.
    *
    * @param commonChatIds - Channel IDs from GetCommonChats
    */

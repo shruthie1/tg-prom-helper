@@ -16,11 +16,20 @@ import {
   createPromotionRuntime,
   computeExpectedValue,
   createDefaultIntelligence,
+  classifyTelegramChannelError,
+  computeLiveCanSendMsgs,
   evaluateDeletionPolicy,
   evaluateFollowUpScheduling,
+  evaluateChannelPromotionHealth,
   evaluatePromotionChannelEligibility,
+  getTelegramChannelLiveFacts,
+  getTelegramChannelMessageStats,
+  getTelegramCommonChatIds,
+  mergeHydratedChannelFacts,
   readPromotionFeatureFlags,
+  resolvePromotionFailureAction,
   selectPromotionChannels,
+  shouldHydrateBeforeFinalReject,
 } from '../src';
 import type {
   ChannelPercentiles,
@@ -59,11 +68,20 @@ describe('public package API', () => {
     expect(createPromotionRuntime).toBeDefined();
     expect(computeExpectedValue).toBeDefined();
     expect(createDefaultIntelligence).toBeDefined();
+    expect(classifyTelegramChannelError).toBeDefined();
+    expect(computeLiveCanSendMsgs).toBeDefined();
     expect(evaluateDeletionPolicy).toBeDefined();
     expect(evaluateFollowUpScheduling).toBeDefined();
+    expect(evaluateChannelPromotionHealth).toBeDefined();
     expect(evaluatePromotionChannelEligibility).toBeDefined();
+    expect(getTelegramChannelLiveFacts).toBeDefined();
+    expect(getTelegramChannelMessageStats).toBeDefined();
+    expect(getTelegramCommonChatIds).toBeDefined();
+    expect(mergeHydratedChannelFacts).toBeDefined();
     expect(readPromotionFeatureFlags).toBeDefined();
+    expect(resolvePromotionFailureAction).toBeDefined();
     expect(selectPromotionChannels).toBeDefined();
+    expect(shouldHydrateBeforeFinalReject).toBeDefined();
   });
 
   it('keeps npm subpath exports aligned with supported package boundaries', () => {

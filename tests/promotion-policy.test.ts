@@ -43,64 +43,77 @@ describe('promotion policy', () => {
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, banned: true },
-      })).toEqual({ eligible: false, reason: 'Channel is banned' });
+      })).toEqual({ eligible: false, reason: 'banned' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, restricted: true },
-      })).toEqual({ eligible: false, reason: 'Channel is restricted, forbidden, or private' });
+      })).toEqual({ eligible: false, reason: 'restricted' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, forbidden: true },
-      })).toEqual({ eligible: false, reason: 'Channel is restricted, forbidden, or private' });
+      })).toEqual({ eligible: false, reason: 'forbidden' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, private: true },
-      })).toEqual({ eligible: false, reason: 'Channel is restricted, forbidden, or private' });
+      })).toEqual({ eligible: false, reason: 'private' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, canSendMsgs: false },
-      })).toEqual({ eligible: false, reason: 'Channel ch-hard is not eligible for promotions' });
+      })).toEqual({ eligible: false, reason: 'canSendMsgs_false' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { channelId: 'missing-sendability', participantsCount: 1000 },
-      })).toEqual({ eligible: false, reason: 'Channel missing-sendability is not eligible for promotions' });
+      })).toEqual({ eligible: false, reason: 'canSendMsgs_missing' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, broadcast: true },
-      })).toEqual({ eligible: false, reason: 'Channel ch-hard is not eligible for promotions' });
+      })).toEqual({ eligible: false, reason: 'broadcast' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, sendMessages: true },
-      })).toEqual({ eligible: false, reason: 'Channel ch-hard is not eligible for promotions' });
+      })).toEqual({ eligible: false, reason: 'sendMessages' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, sendPlain: true },
-      })).toEqual({ eligible: false, reason: 'Channel ch-hard is not eligible for promotions' });
+      })).toEqual({ eligible: false, reason: 'sendPlain' });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: true,
         channel: { ...baseChannel, availableMsgs: [] },
-      })).toEqual({ eligible: false, reason: 'No available promotion messages' });
+      })).toEqual({ eligible: true, reason: null });
     });
 
-    it('preserves legacy hard skips when scoring is disabled', () => {
+    it('uses health score penalties instead of legacy participant/deletion hard skips', () => {
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: false,
         channel: { channelId: 'ch1', participantsCount: 100, canSendMsgs: true },
-      })).toEqual({ eligible: false, reason: 'Not enough participants (100)' });
+      })).toEqual({ eligible: true, reason: null });
 
       expect(evaluatePromotionChannelEligibility({
         scoringEnabled: false,
         channel: { channelId: 'ch1', participantsCount: 1000, deletedCount: 31, canSendMsgs: true },
-      })).toEqual({ eligible: false, reason: 'Channel ch1 has too many deletions' });
+      })).toEqual({ eligible: true, reason: null });
+
+      expect(evaluatePromotionChannelEligibility({
+        scoringEnabled: false,
+        channel: {
+          channelId: 'ch1',
+          participantsCount: 40,
+          deletedCount: 4,
+          failureMsgCount: 9,
+          availableMsgs: [],
+          wordRestriction: 8,
+          canSendMsgs: true,
+        },
+      })).toEqual({ eligible: false, reason: 'health_score_below_threshold:0' });
     });
 
     it('enforces cross-account recent promotion locks even when scoring is disabled', () => {

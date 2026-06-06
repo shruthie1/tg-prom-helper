@@ -3,6 +3,7 @@ import type {
   ChannelEligibilityInput,
   ChannelEligibilityResult,
 } from './policy.types';
+import { evaluateChannelPromotionHealth } from '../../channel-state';
 import { safeNonNegative, safeUnitRandom } from './policy-number-utils';
 
 export function evaluatePromotionChannelEligibility(
@@ -30,23 +31,12 @@ export function evaluatePromotionChannelEligibility(
   const successMsgCount = safeNonNegative(channel.successMsgCount);
   const failureMsgCount = safeNonNegative(channel.failureMsgCount);
 
-  if (channel.banned === true) return { eligible: false, reason: 'Channel is banned' };
-  if (channel.restricted === true || channel.forbidden === true || channel.private === true) return { eligible: false, reason: 'Channel is restricted, forbidden, or private' };
   if (recentlyQueued === true) return { eligible: false, reason: 'Recently promoted (in queue)' };
   if (recentlyPromotedByOtherAccount === true) {
     return { eligible: false, reason: 'Recently promoted by another account' };
   }
-  if (
-    channel.broadcast === true ||
-    channel.sendMessages === true ||
-    channel.sendPlain === true ||
-    channel.canSendMsgs !== true
-  ) {
-    return { eligible: false, reason: `Channel ${channel.channelId} is not eligible for promotions` };
-  }
-  if (Array.isArray(channel.availableMsgs) && channel.availableMsgs.length === 0) {
-    return { eligible: false, reason: 'No available promotion messages' };
-  }
+  const health = evaluateChannelPromotionHealth({ ...channel, now: safeNow });
+  if (!health.promotable) return { eligible: false, reason: health.reason };
 
   const previousFailure = previousResult && !previousResult.success ? previousResult : null;
   const previousFailureTimestamp = previousFailure
@@ -84,9 +74,6 @@ export function evaluatePromotionChannelEligibility(
     if (isConfidentOffTopic(classification) && safeUnitRandom(random) > 0.05) {
       return { eligible: false, reason: `Off-topic (${classificationConfidence.toFixed(2)} confidence)` };
     }
-  } else {
-    if (participantsCount < 500) return { eligible: false, reason: `Not enough participants (${participantsCount})` };
-    if (deletedCount > 30) return { eligible: false, reason: `Channel ${channel.channelId} has too many deletions` };
   }
 
   return { eligible: true, reason: null };

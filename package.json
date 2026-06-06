@@ -46,6 +46,10 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "dependencies": {
+    "big-integer": "^1.6.52",
+    "telegram": "2.26.22"
+  },
   "peerDependencies": {
     "ioredis": ">=5.0.0",
     "mongodb": ">=5.0.0"

@@ -1,5 +1,3 @@
-export * from './channel-message-promotions';
-export * from './telegram-client';
 export {
   DEFAULT_CHANNEL_DOC_STALE_AFTER_DAYS,
   DEFAULT_CHANNEL_DOC_STALE_AFTER_MS,
@@ -14,6 +12,7 @@ export {
   evaluateChannelSendability,
   getChannelDocStaleness,
   mergeHydratedChannelFacts,
+  normalizeChannelId,
   resolvePromotionFailureAction,
   shouldHydrateBeforeFinalReject,
   type ChannelDocumentSnapshot,
@@ -32,14 +31,3 @@ export {
   type TelegramChannelErrorClassification,
   type TelegramChannelLiveFacts,
 } from './channel-state';
-
-export type { ChannelPercentiles, PercentileBuckets } from './types';
-export type {
-  AggregateableCollectionLike,
-  AggregateCursorLike,
-  CursorLike,
-  MongoCollectionLike,
-  RedisExistsResult,
-  RedisLike,
-  RedisPipelineLike,
-} from './types';
