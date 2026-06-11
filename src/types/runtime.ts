@@ -18,6 +18,7 @@ export interface MongoCollectionLike<T> {
   find(filter: object, options?: MongoFindOptions): CursorLike<T>;
   findOneAndUpdate(filter: object, update: object, options?: MongoUpdateOptions): Promise<T | null>;
   updateOne(filter: object, update: object, options?: MongoUpdateOptions): Promise<unknown>;
+  updateMany?(filter: object, update: object, options?: MongoUpdateOptions): Promise<{ modifiedCount: number }>;
   createIndex(indexSpec: MongoSortSpec, options?: MongoCreateIndexOptions): Promise<unknown>;
 }
 

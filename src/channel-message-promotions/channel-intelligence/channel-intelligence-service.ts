@@ -107,6 +107,34 @@ export class ChannelIntelligenceService {
     return rows.filter(isChannelIntelligenceDocument);
   }
 
+  /**
+   * Recover hostile channels that have cooled down.
+   * Hostile channels are excluded from promotion selection, so their stage never gets
+   * re-evaluated. This method finds eligible hostile channels and resets them to 'learning'.
+   * Should be called periodically (e.g., once per health check cycle).
+   */
+  async recoverStaleHostileChannels(): Promise<number> {
+    const threeDaysAgo = Date.now() - 3 * 24 * 3600000;
+    const filter = {
+      stage: 'hostile',
+      stageUpdatedAt: { $lt: threeDaysAgo },
+    };
+    const update = { $set: { stage: 'learning', stageUpdatedAt: Date.now(), 'errors.consecutiveErrors': 0 } };
+    if (this.collection.updateMany) {
+      const result = await this.collection.updateMany(filter, update);
+      return result.modifiedCount;
+    }
+    // Fallback: iterate and updateOne
+    const cursor = this.collection.find(filter);
+    let count = 0;
+    const docs = await readCursorArray<ChannelIntelligenceDocument>(cursor);
+    for (const doc of docs) {
+      await this.collection.updateOne({ channelId: doc.channelId }, update);
+      count++;
+    }
+    return count;
+  }
+
   // --- Upsert ---
 
   async ensureDoc(channelId: string, topic: string = 'general_chat'): Promise<void> {
@@ -230,14 +258,18 @@ export class ChannelIntelligenceService {
     const now = Date.now();
     const safeErrorType = normalizeErrorType(errorType);
     const errorCategory = this.categorizeError(safeErrorType);
+    const accountOnly = isAccountSpecificError(safeErrorType.toUpperCase());
     await this.applyDiscount(safeChannelId, safeStrategy);
 
     const incFields: Record<string, number> = {
-      [`strategies.${safeStrategy}.f`]: 1,
-      [`strategies.${safeStrategy}.n`]: 1,
+      [`strategies.${safeStrategy}.f`]: accountOnly ? 0 : 1,
+      [`strategies.${safeStrategy}.n`]: accountOnly ? 0 : 1,
       [`errors.${errorCategory}`]: 1,
-      'errors.consecutiveErrors': 1,
     };
+    // Only increment consecutiveErrors for channel-level issues, not per-account bans/floods
+    if (!accountOnly) {
+      incFields['errors.consecutiveErrors'] = 1;
+    }
 
     const setFields: Record<string, unknown> = {
       'errors.lastErrorType': safeErrorType,
@@ -246,7 +278,7 @@ export class ChannelIntelligenceService {
     };
 
     const cooldownMs = this.getCooldownForError(safeErrorType);
-    if (cooldownMs > 0) {
+    if (cooldownMs > 0 && !accountOnly) {
       setFields['cooldownUntil'] = now + cooldownMs;
     }
 
@@ -541,8 +573,9 @@ export class ChannelIntelligenceService {
       const deleteRate = totalPulls > 0 ? totalDeletions / totalPulls : 0;
       const deleteRank = pe.getPercentileRankSync(deleteRate, 'deleteRate');
 
-      // HOSTILE: deleteRate above p90 OR consecutive errors > 5
-      if (deleteRank >= 0.90 || safeNonNegative(errors['consecutiveErrors']) > 5) {
+      // HOSTILE: only from confirmed channel-level moderation (high deletion rate)
+      // Account-specific errors (bans, floods) are handled in-memory per process
+      if (deleteRate > 0.3 && deleteRank >= 0.90) {
         newStage = 'hostile';
       }
       // HOSTILE recovery: wait proportional to severity
@@ -563,7 +596,8 @@ export class ChannelIntelligenceService {
       }
     } else {
       // Fallback: reasonable defaults when percentiles not available
-      if (totalDeletions > 30 || safeNonNegative(errors['consecutiveErrors']) > 5) {
+      const fallbackDeleteRate = totalPulls > 0 ? totalDeletions / totalPulls : 0;
+      if (fallbackDeleteRate > 0.3 && totalDeletions > 10) {
         newStage = 'hostile';
       } else if (currentStage === 'hostile') {
         if (Date.now() - safeTimestamp(doc.stageUpdatedAt) > 72 * 3600000 && safeNonNegative(errors['consecutiveErrors']) === 0) {
@@ -814,15 +848,21 @@ function normalizeErrorType(value: unknown): string {
 }
 
 function isTerminalChannelError(value: string): boolean {
-  return value.includes('CHAT_WRITE_FORBIDDEN')
-    || value.includes('USER_BANNED_IN_CHANNEL')
-    || value.includes('USER_NOT_PARTICIPANT')
-    || value.includes('CHANNEL_PRIVATE')
+  return value.includes('CHANNEL_PRIVATE')
     || value.includes('CHANNEL_INVALID')
     || value.includes('PEER_ID_INVALID')
     || value.includes('TOPIC_CLOSED')
-    || value.includes('TOPIC_DELETED')
-    || value.includes('CHAT_ADMIN_REQUIRED');
+    || value.includes('TOPIC_DELETED');
+}
+
+export function isAccountSpecificError(value: string): boolean {
+  return value.includes('CHAT_WRITE_FORBIDDEN')
+    || value.includes('USER_BANNED_IN_CHANNEL')
+    || value.includes('USER_NOT_PARTICIPANT')
+    || value.includes('CHAT_ADMIN_REQUIRED')
+    || value.includes('FLOOD_WAIT')
+    || value.includes('SLOWMODE_WAIT')
+    || value.includes('PEER_FLOOD');
 }
 
 function parseWaitSeconds(value: string): number {
