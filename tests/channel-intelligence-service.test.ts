@@ -127,8 +127,8 @@ describe('ChannelIntelligenceService', () => {
     });
 
     it('resets consecutiveErrors on success', async () => {
-      await service.recordFailure('ch1', 'legacy', 'PEER_FLOOD');
-      await service.recordFailure('ch1', 'legacy', 'PEER_FLOOD');
+      await service.recordFailure('ch1', 'legacy', 'TRANSIENT');
+      await service.recordFailure('ch1', 'legacy', 'TRANSIENT');
       let doc = await intelligence.findOne({ channelId: 'ch1' });
       expect(doc!.errors.consecutiveErrors).toBe(2);
 
@@ -307,7 +307,7 @@ describe('ChannelIntelligenceService', () => {
 
     it('classifies terminal Telegram channel errors as restricted cooldowns', async () => {
       const before = Date.now();
-      await service.recordFailure('ch_forbidden', 'legacy', 'CHAT_WRITE_FORBIDDEN');
+      await service.recordFailure('ch_forbidden', 'legacy', 'CHANNEL_PRIVATE');
       const doc = await intelligence.findOne({ channelId: 'ch_forbidden' });
 
       expect(doc!.errors.CHANNEL_RESTRICTED).toBe(1);
@@ -385,12 +385,13 @@ describe('ChannelIntelligenceService', () => {
       expect(doc!.stage).toBe('hostile');
     });
 
-    it('transitions to hostile on >5 consecutive errors', async () => {
+    it('does NOT transition to hostile from consecutive errors alone (account-level concern)', async () => {
       for (let i = 0; i < 7; i++) {
         await service.recordFailure('ch1', 'legacy', 'TRANSIENT');
       }
       const doc = await intelligence.findOne({ channelId: 'ch1' });
-      expect(doc!.stage).toBe('hostile');
+      // Hostile only from deletion rate, not from send errors
+      expect(doc!.stage).not.toBe('hostile');
     });
 
     it('hostile recovery without percentile engine (fallback)', async () => {
@@ -695,8 +696,11 @@ describe('ChannelIntelligenceService', () => {
       for (let i = 0; i < 20; i++) {
         await service.recordSuccess('high', 'ai_contextual', false);
       }
-      // Give 'low' many failures for a low EV
-      for (let i = 0; i < 15; i++) {
+      // Give 'low' some successes but also failures for a low EV (but not hostile)
+      for (let i = 0; i < 5; i++) {
+        await service.recordSuccess('low', 'legacy', false);
+      }
+      for (let i = 0; i < 3; i++) {
         await service.recordDeletion('low', 'legacy', 5000, false);
       }
 
@@ -985,36 +989,35 @@ describe('ChannelIntelligenceService', () => {
   });
 
   describe('error cooldowns', () => {
-    it('sets cooldown for FLOOD_WAIT', async () => {
-      const before = Date.now();
+    it('does NOT set cooldown for account-specific FLOOD_WAIT', async () => {
       await service.recordFailure('ch_fw', 'legacy', 'FLOOD_WAIT');
       const doc = await intelligence.findOne({ channelId: 'ch_fw' });
-      // 5 min cooldown
-      expect(doc!.cooldownUntil).toBeGreaterThan(before);
-      expect(doc!.cooldownUntil).toBeLessThan(before + 10 * 60_000);
+      expect(doc!.cooldownUntil).toBe(0);
     });
 
-    it('honors explicit Telegram wait seconds when larger than the default flood cooldown', async () => {
-      const before = Date.now();
+    it('does NOT set cooldown for account-specific FLOOD_WAIT with seconds', async () => {
       await service.recordFailure('ch_fw_long', 'legacy', 'FLOOD_WAIT_3600');
       const doc = await intelligence.findOne({ channelId: 'ch_fw_long' });
-
-      expect(doc!.cooldownUntil).toBeGreaterThanOrEqual(before + 60 * 60_000);
+      expect(doc!.cooldownUntil).toBe(0);
     });
 
-    it('sets cooldown for SLOWMODE_WAIT', async () => {
-      const before = Date.now();
+    it('does NOT set cooldown for account-specific SLOWMODE_WAIT', async () => {
       await service.recordFailure('ch_sw', 'legacy', 'SLOWMODE_WAIT');
       const doc = await intelligence.findOne({ channelId: 'ch_sw' });
-      expect(doc!.cooldownUntil).toBeGreaterThan(before);
+      expect(doc!.cooldownUntil).toBe(0);
     });
 
-    it('sets cooldown for PEER_FLOOD', async () => {
-      const before = Date.now();
+    it('does NOT set cooldown for account-specific PEER_FLOOD', async () => {
       await service.recordFailure('ch_pf', 'legacy', 'PEER_FLOOD');
       const doc = await intelligence.findOne({ channelId: 'ch_pf' });
-      // 60 min cooldown
-      expect(doc!.cooldownUntil).toBeGreaterThan(before + 50 * 60_000);
+      expect(doc!.cooldownUntil).toBe(0);
+    });
+
+    it('sets cooldown for channel-level CHANNEL_PRIVATE', async () => {
+      const before = Date.now();
+      await service.recordFailure('ch_priv', 'legacy', 'CHANNEL_PRIVATE');
+      const doc = await intelligence.findOne({ channelId: 'ch_priv' });
+      expect(doc!.cooldownUntil).toBeGreaterThan(before + 6 * 24 * 3600000);
     });
   });
 
