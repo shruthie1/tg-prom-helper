@@ -14,3 +14,6 @@ sync-errors.log
 sync.log
 sync-git.log
 *.bak-centralize
+
+# lockfile untracked: VMs run npm install and regenerate it
+package-lock.json
