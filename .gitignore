@@ -6,3 +6,11 @@ sync.log
 sync-errors.log
 .DS_Store
 .env
+
+# sync-core runtime artifacts (do not commit)
+.sync-state
+.sync.lock
+.sync-git.lock
+sync.log
+sync-git.log
+*.bak-centralize

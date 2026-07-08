@@ -1,0 +1,4 @@
+#!/bin/sh
+# SHIM — logic lives in local/scripts/sync-core/. Do not edit; edit the core.
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec sh "$REPO_DIR/../scripts/sync-core/pre-commit.sh" "$REPO_DIR"
